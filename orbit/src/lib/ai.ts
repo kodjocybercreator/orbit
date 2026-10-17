@@ -159,8 +159,8 @@ async function askGroq(
   try {
     let res: Response | null = null;
     let usedModel = "";
-    for (const model of MODELS) {
-      const attempt = await fetch(GROQ_URL, {
+    const doFetch = (model: string) =>
+      fetch(GROQ_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -175,6 +175,13 @@ async function askGroq(
         }),
         signal: controller.signal,
       });
+    for (const model of MODELS) {
+      let attempt = await doFetch(model);
+      // 429 = free-tier rate limit — one short pause usually clears it.
+      if (attempt.status === 429) {
+        await new Promise((r) => setTimeout(r, 1500)).catch(() => {});
+        attempt = await doFetch(model);
+      }
       usedModel = model;
       if (attempt.ok) {
         res = attempt;

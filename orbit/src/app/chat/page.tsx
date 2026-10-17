@@ -4,9 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, getTodayEnergy, logEnergy, todayKey } from "@/lib/db";
 import { askOrbit } from "@/lib/ai";
-import { Send, Trash2, Zap } from "lucide-react";
+import { Loader2, Send, Trash2, Zap } from "lucide-react";
 
 const ENERGY_CHIPS = [1, 3, 5];
+
+type HistItem = { role: "user" | "orbit"; text: string };
+type QueuedAsk = { t: string; history: HistItem[]; base: number };
 
 export default function ChatPage() {
   const [input, setInput] = useState("");
@@ -14,22 +17,43 @@ export default function ChatPage() {
   const [mounted, setMounted] = useState(false);
   const [offlineIds, setOfflineIds] = useState<number[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // Synchronous guards: React state lags a tick, which let double-taps race.
+  const busyRef = useRef(false);
+  const queueRef = useRef<QueuedAsk[]>([]);
+  const lastTsRef = useRef(0);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  const messages = useLiveQuery(() => db.chatMessages.orderBy("createdAt").toArray(), []) ?? [];
+  // Last 150 messages only — the full table made long chats janky over time.
+  const messages =
+    useLiveQuery(
+      () =>
+        db.chatMessages
+          .orderBy("createdAt")
+          .reverse()
+          .limit(150)
+          .toArray()
+          .then((rows) => rows.reverse()),
+      []
+    ) ?? [];
   const energy = useLiveQuery(() => getTodayEnergy(), []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, busy]);
 
+  function stamp(): number {
+    const ts = Math.max(Date.now(), lastTsRef.current + 1);
+    lastTsRef.current = ts;
+    return ts;
+  }
+
   async function quickEnergy(level: number) {
-    if (busy) return;
+    if (busyRef.current) return;
     await logEnergy(level);
-    const base = Date.now();
+    const base = stamp();
     await db.chatMessages.add({
       role: "user",
       text: `Energy ${level}/5 today`,
@@ -47,15 +71,9 @@ export default function ChatPage() {
     });
   }
 
-  async function send(text: string) {
-    const t = text.trim();
-    if (!t || busy) return;
-    setInput("");
-    setBusy(true);
-    const history = messages.slice(-8).map((m) => ({ role: m.role, text: m.text }));
-    const base = Date.now();
+  /** One queued ask, start to finish. Reply lands right after its question. */
+  async function answerOne({ t, history, base }: QueuedAsk): Promise<void> {
     try {
-      await db.chatMessages.add({ role: "user", text: t, createdAt: base });
       const result = await askOrbit(t, history);
       const id = await db.chatMessages.add({
         role: "orbit",
@@ -74,16 +92,45 @@ export default function ChatPage() {
         createdAt: Date.now(),
       });
     } catch (e) {
-      await db.chatMessages.add({
-        role: "orbit",
-        text: `Something went wrong: ${
-          e instanceof Error ? e.message : "unknown"
-        }. Check your connection or API key in Settings.`,
-        createdAt: base + 1,
-      });
+      await db.chatMessages
+        .add({
+          role: "orbit",
+          text: `Something went wrong: ${
+            e instanceof Error ? e.message : "unknown"
+          }. Check your connection or API key in Settings.`,
+          createdAt: base + 1,
+        })
+        .catch(() => {});
+    }
+  }
+
+  /** Drain the queue serially; one runner max, exit always resets busy. */
+  async function processQueue(): Promise<void> {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      let item = queueRef.current.shift();
+      while (item) {
+        await answerOne(item);
+        item = queueRef.current.shift();
+      }
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
+  }
+
+  /** Every tap is honored: the message shows instantly and is sent after the current reply. */
+  function send(text: string) {
+    const t = text.trim();
+    if (!t) return;
+    const history = messages.slice(-8).map((m) => ({ role: m.role, text: m.text }));
+    const base = stamp();
+    setInput("");
+    void db.chatMessages.add({ role: "user", text: t, createdAt: base }).catch(() => {});
+    queueRef.current.push({ t, history, base });
+    void processQueue();
   }
 
   async function clearChat() {
@@ -237,19 +284,18 @@ export default function ChatPage() {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask Orbit anything…"
-          disabled={busy}
-          className="min-w-0 flex-1 rounded-2xl border px-4 py-3 text-sm outline-none disabled:opacity-60"
+          placeholder={busy ? "Keep typing — tap send to queue it…" : "Ask Orbit anything…"}
+          className="min-w-0 flex-1 rounded-2xl border px-4 py-3 text-sm outline-none"
           style={{ background: "var(--card)", borderColor: "var(--card-border)", color: "var(--foreground)" }}
         />
         <button
           type="submit"
-          disabled={busy || !input.trim()}
+          disabled={!input.trim()}
           className="press flex h-12 w-12 shrink-0 items-center justify-center rounded-full disabled:opacity-40"
           style={{ background: "var(--accent)", color: "var(--accent-ink)" }}
-          aria-label="Send"
+          aria-label={busy ? "Queue message" : "Send"}
         >
-          <Send size={18} />
+          {busy ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
         </button>
       </form>
     </div>

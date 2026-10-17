@@ -129,9 +129,18 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
 
   .press {
     @apply transition-transform duration-150;
+    /* Kill double-tap-zoom delay so taps register instantly on Android. */
+    touch-action: manipulation;
   }
   .press:active {
     transform: scale(0.97);
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    touch-action: manipulation;
   }
 
   .label-cap {
