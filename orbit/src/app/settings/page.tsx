@@ -9,8 +9,8 @@ import {
   clearAllData,
   type Settings,
 } from "@/lib/db";
-import { ensurePermission, rescheduleAllReminders } from "@/lib/notify";
-import { checkForUpdate, recordCheck, APP_VERSION } from "@/lib/update";
+import { ensurePermission, rescheduleAllReminders, notifyUpdateAvailable } from "@/lib/notify";
+import { checkForUpdate, recordCheck, setPendingUpdate, APP_VERSION } from "@/lib/update";
 import type { UpdateManifest } from "@/lib/update";
 import { Bell, Database, Download, KeyRound, RefreshCw, Trash2, Upload, User, Wallet } from "lucide-react";
 
@@ -19,6 +19,17 @@ const inputStyle = {
   borderColor: "var(--card-border)",
   color: "var(--foreground)",
 };
+
+const CURRENCY_CHOICES: { symbol: string; name: string }[] = [
+  { symbol: "₵", name: "Ghana cedi" },
+  { symbol: "$", name: "US dollar" },
+  { symbol: "€", name: "Euro" },
+  { symbol: "£", name: "British pound" },
+  { symbol: "₦", name: "Nigerian naira" },
+  { symbol: "₹", name: "Indian rupee" },
+  { symbol: "R", name: "South African rand" },
+  { symbol: "¥", name: "Japanese yen" },
+];
 
 function FieldLabel({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -90,6 +101,8 @@ export default function SettingsPage() {
       recordCheck();
       const update: UpdateManifest | null = await checkForUpdate(trimmed || undefined);
       if (update) {
+        setPendingUpdate(update);
+        void notifyUpdateAvailable(update);
         setUpdateMsg({
           ok: true,
           text: `Orbit v${update.version} is available — you have v${APP_VERSION}.`,
@@ -216,6 +229,32 @@ export default function SettingsPage() {
               />
             </label>
           </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="label-cap" style={{ color: "var(--muted)" }}>
+              Quick pick
+            </span>
+            {CURRENCY_CHOICES.map(({ symbol, name }) => {
+              const active = currency.trim() === symbol;
+              return (
+                <button
+                  key={symbol}
+                  type="button"
+                  title={name}
+                  aria-label={`${name} (${symbol})`}
+                  aria-pressed={active}
+                  onClick={() => setCurrency(symbol)}
+                  className="press rounded-lg border px-2.5 py-1 text-xs font-semibold"
+                  style={{
+                    borderColor: active ? "var(--accent)" : "var(--card-border)",
+                    background: active ? "var(--accent-soft)" : "transparent",
+                    color: active ? "var(--accent)" : "var(--muted)",
+                  }}
+                >
+                  {symbol}
+                </button>
+              );
+            })}
+          </div>
           <label className="block space-y-1.5">
             <FieldLabel icon={<span className="text-xs font-bold">W</span>}>Week starts</FieldLabel>
             <select
@@ -338,8 +377,9 @@ export default function SettingsPage() {
           </div>
         )}
         <p className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
-          Web installs update themselves automatically. APK installs check the feed above once a day —
-          point it at a hosted orbit-version.json to get a download prompt when a new release exists.
+          Web installs update themselves automatically. APK installs check the default Orbit feed
+          once a day and notify you when a new release ships — point the URL above at your own
+          orbit-version.json to use a custom feed instead.
         </p>
       </section>
 

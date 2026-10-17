@@ -1,7 +1,12 @@
 import { getSettings } from "./db";
 
-export const APP_VERSION = "1.2";
-export const APP_VERSION_CODE = 4;
+export const APP_VERSION = "1.3";
+export const APP_VERSION_CODE = 5;
+
+/** Default update feed (GitHub raw) — works from the APK and the website alike.
+ *  Overridable in Settings → Updates. */
+export const DEFAULT_FEED_URL =
+  "https://raw.githubusercontent.com/kodjocybercreator/orbit/main/orbit-version.json";
 
 export interface UpdateManifest {
   version: string;
@@ -12,15 +17,48 @@ export interface UpdateManifest {
 
 const CHECK_KEY = "orbit-last-update-check";
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const PENDING_KEY = "orbit-pending-update";
 
-/** Feed URL: custom one from Settings, else the site's own version file. */
+/** Remember a discovered update so the banner reappears on every app open
+ *  (this is what the update notification deep-links into). */
+export function setPendingUpdate(manifest: UpdateManifest): void {
+  try {
+    localStorage.setItem(PENDING_KEY, JSON.stringify(manifest));
+  } catch {
+    /* private mode */
+  }
+}
+
+export function getPendingUpdate(): UpdateManifest | null {
+  try {
+    const raw = localStorage.getItem(PENDING_KEY);
+    if (!raw) return null;
+    const m = JSON.parse(raw);
+    if (m && typeof m.version === "string" && Number.isFinite(m.versionCode)) return m as UpdateManifest;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Drop the pending banner once the app itself is that new version (after an update). */
+export function clearPendingIfCurrent(): UpdateManifest | null {
+  const pending = getPendingUpdate();
+  if (pending && pending.versionCode <= APP_VERSION_CODE) {
+    try {
+      localStorage.removeItem(PENDING_KEY);
+    } catch {
+      /* private mode */
+    }
+    return null;
+  }
+  return pending;
+}
+
+/** Feed URL: custom one from Settings, else the Orbit default GitHub feed. */
 export async function resolveFeedUrl(): Promise<string | undefined> {
   const settings = await getSettings();
-  if (settings.updateFeedUrl) return settings.updateFeedUrl;
-  if (typeof window !== "undefined") {
-    return `${window.location.origin}/orbit-version.json`;
-  }
-  return undefined;
+  return settings.updateFeedUrl || DEFAULT_FEED_URL;
 }
 
 /** Fetch and validate the update manifest. Returns null when unavailable or invalid. */

@@ -2,7 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { RefreshCw, Download, X } from "lucide-react";
-import { checkForUpdate, shouldAutoCheck, recordCheck } from "@/lib/update";
+import {
+  checkForUpdate,
+  shouldAutoCheck,
+  recordCheck,
+  setPendingUpdate,
+  getPendingUpdate,
+  clearPendingIfCurrent,
+} from "@/lib/update";
+import { notifyUpdateAvailable } from "@/lib/notify";
 
 type Notice =
   | { kind: "sw"; title: string; body: string }
@@ -30,14 +38,22 @@ export default function UpdateToasts() {
 
     let cancelled = false;
     (async () => {
-      if (!shouldAutoCheck()) return;
-      const update = await checkForUpdate().catch(() => null);
-      if (cancelled || !update) return;
+      // A known update keeps showing until the app is actually that version —
+      // this is what the update notification leads back to.
+      let pending = clearPendingIfCurrent() ?? getPendingUpdate();
+      if (!pending && shouldAutoCheck()) {
+        const update = await checkForUpdate().catch(() => null);
+        if (cancelled || !update) return;
+        setPendingUpdate(update);
+        void notifyUpdateAvailable(update);
+        pending = update;
+      }
+      if (cancelled || !pending) return;
       setNotice({
         kind: "feed",
-        title: `Orbit v${update.version} available`,
-        body: update.notes || `You have an older version installed (v${update.versionCode - 1} or earlier).`,
-        url: update.url,
+        title: `Orbit v${pending.version} available`,
+        body: pending.notes || "A new version of Orbit is ready.",
+        url: pending.url,
       });
     })();
 

@@ -3,8 +3,12 @@ import { Capacitor } from "@capacitor/core";
 import { db, getSettings, type Deadline } from "./db";
 
 const ANDROID_CHANNEL = "orbit-reminders";
+const UPDATE_CHANNEL = "orbit-updates";
+const UPDATE_NOTIF_ID = 99001;
+const UPDATE_NOTIFIED_KEY = "orbit-update-notified";
 
 let channelReady = false;
+let updateChannelReady = false;
 
 export function notificationsSupported(): boolean {
   return Capacitor.isNativePlatform();
@@ -110,4 +114,66 @@ export async function rescheduleAllReminders(): Promise<void> {
   }
   const open = (await db.deadlines.toArray()).filter((d) => !d.done);
   await Promise.all(open.map((d) => scheduleDeadlineReminder(d)));
+}
+
+/**
+ * Push a system notification when a newer version exists — once per
+ * versionCode. Tapping it opens the download URL from the update feed
+ * (or the app itself when no URL is provided).
+ */
+export async function notifyUpdateAvailable(update: {
+  version: string;
+  versionCode: number;
+  notes?: string;
+  url?: string;
+}): Promise<void> {
+  if (!notificationsSupported()) return;
+  try {
+    if (localStorage.getItem(UPDATE_NOTIFIED_KEY) === String(update.versionCode)) return;
+  } catch {
+    /* private mode — fall through and try anyway */
+  }
+
+  const granted = await ensurePermission();
+  if (!granted) return;
+
+  if (!updateChannelReady && Capacitor.getPlatform().match(/android/)) {
+    try {
+      await LocalNotifications.createChannel({
+        id: UPDATE_CHANNEL,
+        name: "App updates",
+        importance: 4,
+        sound: "default",
+        vibration: true,
+        lights: true,
+      });
+      updateChannelReady = true;
+    } catch {
+      /* older plugin versions may not support channels */
+    }
+  }
+
+  try {
+    // Replace any previous update notification so retries never stack.
+    await LocalNotifications.cancel({ notifications: [{ id: UPDATE_NOTIF_ID }] });
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          id: UPDATE_NOTIF_ID,
+          title: `Orbit v${update.version} is ready to update`,
+          body: update.notes || "A new version of Orbit is available. Open the app to get it.",
+          schedule: { at: new Date(Date.now() + 1200) },
+          channelId: UPDATE_CHANNEL,
+          extra: { kind: "update", versionCode: update.versionCode, url: update.url },
+        },
+      ],
+    });
+    try {
+      localStorage.setItem(UPDATE_NOTIFIED_KEY, String(update.versionCode));
+    } catch {
+      /* private mode */
+    }
+  } catch {
+    /* best-effort */
+  }
 }
