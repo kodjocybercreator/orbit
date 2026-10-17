@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { Capacitor } from "@capacitor/core";
 import { StatusBar, Style } from "@capacitor/status-bar";
-import { registerUpdateAction } from "@/lib/notify";
+import { registerUpdateAction, bootstrapNotifications } from "@/lib/notify";
 
 /**
  * Android 15+ (targetSdk 36) enforces edge-to-edge: the deprecated
@@ -58,6 +58,8 @@ export default function PlatformInit() {
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     registerUpdateAction();
+    // Permission + channels + refresh all deadline reminders, every launch.
+    void bootstrapNotifications();
     const init = async () => {
       try {
         await StatusBar.setOverlaysWebView({ overlay: false });

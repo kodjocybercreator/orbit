@@ -4,12 +4,13 @@ import { Browser } from "@capacitor/browser";
 import { db, getSettings, type Deadline } from "./db";
 
 const ANDROID_CHANNEL = "orbit-reminders";
+const FOCUS_CHANNEL = "orbit-focus";
 const UPDATE_CHANNEL = "orbit-updates";
 const UPDATE_NOTIF_ID = 99001;
+const FOCUS_NOTIF_ID = 91001;
 const UPDATE_NOTIFIED_KEY = "orbit-update-notified";
 
-let channelReady = false;
-let updateChannelReady = false;
+const createdChannels = new Set<string>();
 
 export function notificationsSupported(): boolean {
   return Capacitor.isNativePlatform();
@@ -20,12 +21,12 @@ export async function ensurePermission(): Promise<boolean> {
   try {
     const perm = await LocalNotifications.checkPermissions();
     if (perm.display === "granted") {
-      await ensureChannel();
+      await ensureChannel(ANDROID_CHANNEL, "Deadline reminders");
       return true;
     }
     const req = await LocalNotifications.requestPermissions();
     if (req.display === "granted") {
-      await ensureChannel();
+      await ensureChannel(ANDROID_CHANNEL, "Deadline reminders");
       return true;
     }
     return false;
@@ -34,21 +35,38 @@ export async function ensurePermission(): Promise<boolean> {
   }
 }
 
-async function ensureChannel(): Promise<void> {
-  if (channelReady || !Capacitor.getPlatform().match(/android/)) return;
+async function ensureChannel(id: string, name: string): Promise<void> {
+  if (createdChannels.has(id) || !Capacitor.getPlatform().match(/android/)) return;
   try {
     await LocalNotifications.createChannel({
-      id: ANDROID_CHANNEL,
-      name: "Deadline reminders",
-      importance: 4,
+      id,
+      name,
+      importance: 5, // MAX: heads-up banner + sound even on the lock screen
       sound: "default",
       vibration: true,
       lights: true,
     });
-    channelReady = true;
+    createdChannels.add(id);
   } catch {
     /* older plugin versions may not support channels */
   }
+}
+
+/**
+ * Ask for notification permission and refresh every reminder. Runs on each app
+ * launch so reminders work even if the phone rebooted or the app was reinstalled.
+ */
+export async function bootstrapNotifications(): Promise<void> {
+  if (!notificationsSupported()) return;
+  try {
+    const settings = await getSettings();
+    if (settings.notificationsOn === false) return;
+  } catch {
+    /* no settings yet — still worth asking */
+  }
+  const granted = await ensurePermission();
+  if (!granted) return;
+  await rescheduleAllReminders();
 }
 
 function scheduleId(): number {
@@ -118,6 +136,47 @@ export async function rescheduleAllReminders(): Promise<void> {
 }
 
 /**
+ * Ring a notification the moment a focus session ends — scheduled via
+ * AlarmManager, so it fires even when the app is closed or the phone rebooted.
+ */
+export async function scheduleFocusEnd(endsAt: number, label: string): Promise<void> {
+  if (!notificationsSupported()) return;
+  if (endsAt <= Date.now() + 800) return;
+  try {
+    const settings = await getSettings();
+    if (settings.notificationsOn === false) return;
+    const granted = await ensurePermission();
+    if (!granted) return;
+    await ensureChannel(FOCUS_CHANNEL, "Focus timers");
+    await LocalNotifications.cancel({ notifications: [{ id: FOCUS_NOTIF_ID }] });
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          id: FOCUS_NOTIF_ID,
+          title: "Focus session complete",
+          body: label && label !== "Focus session" ? `${label} — time's up.` : "Time's up — nice work.",
+          schedule: { at: new Date(endsAt) },
+          channelId: FOCUS_CHANNEL,
+          extra: { kind: "focus" },
+        },
+      ],
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Drop a pending focus-end notification (pause / reset / new session). */
+export async function cancelFocusEnd(): Promise<void> {
+  if (!notificationsSupported()) return;
+  try {
+    await LocalNotifications.cancel({ notifications: [{ id: FOCUS_NOTIF_ID }] });
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
  * Push a system notification when a newer version exists — once per
  * versionCode. Tapping it opens the download URL from the update feed
  * (or the app itself when no URL is provided).
@@ -138,21 +197,7 @@ export async function notifyUpdateAvailable(update: {
   const granted = await ensurePermission();
   if (!granted) return;
 
-  if (!updateChannelReady && Capacitor.getPlatform().match(/android/)) {
-    try {
-      await LocalNotifications.createChannel({
-        id: UPDATE_CHANNEL,
-        name: "App updates",
-        importance: 4,
-        sound: "default",
-        vibration: true,
-        lights: true,
-      });
-      updateChannelReady = true;
-    } catch {
-      /* older plugin versions may not support channels */
-    }
-  }
+  await ensureChannel(UPDATE_CHANNEL, "App updates");
 
   try {
     await ensureUpdateActionTypes();

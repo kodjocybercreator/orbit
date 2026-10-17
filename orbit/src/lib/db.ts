@@ -226,6 +226,12 @@ export async function getNextClass(): Promise<{ current?: ClassEntry; next?: Cla
   return {};
 }
 
+/** Full weekly timetable, sorted by day then start time. */
+export async function getAllClasses(): Promise<ClassEntry[]> {
+  const all = await db.classes.toArray();
+  return all.sort((a, b) => a.day - b.day || a.startMin - b.startMin);
+}
+
 export const LETTER_POINTS: Record<string, number> = {
   "A+": 4.0, A: 4.0, "A-": 3.7,
   "B+": 3.3, B: 3.0, "B-": 2.7,

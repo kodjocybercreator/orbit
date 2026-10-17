@@ -5,8 +5,10 @@ import {
   getTodayEnergy,
   getNextClass,
   getTodayClasses,
+  getAllClasses,
   getGpa,
   formatMinutes,
+  DAY_NAMES,
   type PlanItem,
 } from "./db";
 import { planDayOffline, isPlanRequest, type DayPlan } from "./planner";
@@ -36,7 +38,9 @@ function systemPrompt(ctx: {
   nowClass?: string;
   nextClass?: string;
   classesToday: string;
+  timetable: string;
   gpa: number;
+  planMode: boolean;
 }) {
   const deadlineLines =
     ctx.deadlines.length === 0
@@ -50,7 +54,7 @@ function systemPrompt(ctx: {
           })
           .join("\n");
 
-  return `You are Orbit, a warm but direct campus copilot for university students. Speak like a sharp older student — never corporate, never hype.
+  const data = `You are Orbit, a warm but direct campus copilot for university students. Speak like a sharp older student — never corporate, never hype.
 
 User: ${ctx.name || "student"}. It is ${ctx.day}.
 Energy today: ${ctx.energy ?? "not logged"}/5.
@@ -59,33 +63,56 @@ Current GPA: ${ctx.gpa ? ctx.gpa.toFixed(2) : "n/a"}.
 Now: ${ctx.nowClass ?? "no class"}.
 Next class: ${ctx.nextClass ?? "none scheduled"}.
 Classes today: ${ctx.classesToday || "none"}.
+TIMETABLE (their full week, exactly as they entered it):
+${ctx.timetable}
 Open deadlines:
-${deadlineLines}
+${deadlineLines}`;
 
+  const shared = `
 Rules:
+- Ground every answer in the data above. Never invent classes, deadlines or times. If something isn't listed, say so plainly and point to where it lives (Timetable, Tasks, Budget).
+- Tailor to this specific student — reference their actual courses, times and deadlines when relevant.
+- Vary your wording between replies; never reuse the same opener or formula.`;
+
+  const planRules = `
 - Max 3 action items, ordered by urgency vs energy available.
 - If a class is running, first item respects it.
 - If energy <= 2: protect sleep, lighter plan, no stacked deep work.
 - If budget is low: prefer free/low-cost food and ideas.
 - Always state exactly one honest trade-off.
-- Keep reply under 60 words. No emoji. No markdown.
+- Keep reply under 60 words. No emoji. No markdown.`;
 
+  const chatRules = `
+- Answer the actual question asked — plans, explanations, opinions, calculations. Length matches the ask: usually 40–150 words, up to ~300 when they ask for a schedule or step-by-step guide.
+- Use line breaks for lists or day-by-day tables; one line per item, aligned and compact (e.g. "Mon  09:00–11:00  PHYS101 (Lab 2)").
+- When asked to build, reshape or review a timetable or study schedule: work strictly from TIMETABLE above, show every weekday (flagging free days too), slot study/work blocks around classes and around due deadlines, and call out clashes, back-to-back days or zero-break stretches. If TIMETABLE is empty, tell them to add classes on the Timetable tab first and that you'll build the plan from it right after.
+- When they report a change (new class moved, deadline done), acknowledge it and update your view — but only their data changes it, not conversation.
+- No emoji unless the user uses them first.`;
+
+  const json = `
 Respond with JSON only:
 {
-  "reply": "short chat reply",
-  "plan": [{ "title": "short action", "why": "one line reason", "minutes": 30 }],
-  "tradeoff": "one honest trade-off"
+  "reply": "your reply; use \\n for line breaks when listing",
+  "plan": ${ctx.planMode ? `[{ "title": "short action", "why": "one line reason", "minutes": 30 }] (2-3 items)` : `[] (only include a plan if they asked you to schedule or plan something, max 3)`},
+  "tradeoff": ${ctx.planMode ? `"one honest trade-off"` : `"optional — only for real trade-offs"`}
 }`;
+
+  return `${data}${shared}${ctx.planMode ? planRules : chatRules}${json}`;
 }
 
-async function askGroq(userMessage: string, history: { role: "user" | "orbit"; text: string }[]): Promise<AIResult> {
+async function askGroq(
+  userMessage: string,
+  history: { role: "user" | "orbit"; text: string }[],
+  planMode: boolean
+): Promise<AIResult> {
   const settings = await getSettings();
-  const [budget, deadlines, energy, { current, next }, todayClasses, gpaInfo] = await Promise.all([
+  const [budget, deadlines, energy, { current, next }, todayClasses, allClasses, gpaInfo] = await Promise.all([
     getBudgetState(),
     getOpenDeadlines(),
     getTodayEnergy(),
     getNextClass(),
     getTodayClasses(),
+    getAllClasses(),
     getGpa(),
   ]);
 
@@ -99,6 +126,12 @@ async function askGroq(userMessage: string, history: { role: "user" | "orbit"; t
     .map((c) => `${c.name} ${formatMinutes(c.startMin)}–${formatMinutes(c.endMin)}`)
     .join(", ");
 
+  const timetable = allClasses.length
+    ? allClasses
+        .map((c) => `${DAY_NAMES[c.day]} ${formatMinutes(c.startMin)}–${formatMinutes(c.endMin)} ${c.name}${c.code ? ` (${c.code})` : ""}${c.location ? ` @ ${c.location}` : ""}`)
+        .join("\n")
+    : "(no classes entered yet)";
+
   const sys = systemPrompt({
     name: settings.name,
     energy: energy?.energy ?? null,
@@ -110,7 +143,9 @@ async function askGroq(userMessage: string, history: { role: "user" | "orbit"; t
     nowClass: current ? current.name : undefined,
     nextClass: next ? `${next.name} at ${formatMinutes(next.startMin)}` : undefined,
     classesToday,
+    timetable,
     gpa: gpaInfo.gpa,
+    planMode,
   });
 
   const messages = [
@@ -232,7 +267,7 @@ export async function askOrbit(
   }
 
   try {
-    const result = await askGroq(userMessage, history);
+    const result = await askGroq(userMessage, history, planWanted);
     if (planWanted && result.plan.length === 0) {
       const offline = await planDayOffline();
       return { ...result, plan: offline.items, tradeoff: result.tradeoff ?? offline.tradeoff };

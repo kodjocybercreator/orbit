@@ -38,4 +38,9 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Exact alarms: on-time reminders/alarms even in Doze (auto-granted by name here; sideloaded build). -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Arm/dismiss the phone's Clock app alarm for focus sessions. -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
 </manifest>

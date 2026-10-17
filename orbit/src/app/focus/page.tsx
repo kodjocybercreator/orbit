@@ -3,11 +3,53 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, formatDue, getOpenDeadlines } from "@/lib/db";
-import { CircleCheck, Link2, Pause, Play, RotateCcw, Timer } from "lucide-react";
+import { scheduleFocusEnd, cancelFocusEnd } from "@/lib/notify";
+import { systemAlarmAvailable, setSystemAlarm, dismissSystemAlarm } from "@/lib/alarm";
+import { AlarmClock, CircleCheck, Link2, Pause, Play, RotateCcw, Timer } from "lucide-react";
 
 const DURATIONS = [25, 45, 50];
 const RADIUS = 108;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+
+/** Survives app kills: a running session is restored from endsAt. */
+const FOCUS_STATE_KEY = "orbit-focus-state-v1";
+
+interface FocusPersist {
+  duration?: number;
+  secondsLeft?: number;
+  running?: boolean;
+  endsAt?: number | null;
+  linkedId?: string;
+  finished?: boolean;
+  loggedEndsAt?: number | null;
+  armedAt?: number | null;
+  alarmOn?: boolean;
+}
+
+async function focusLabel(linkId: string): Promise<string> {
+  if (!linkId) return "";
+  try {
+    const d = await db.deadlines.get(Number(linkId));
+    return d?.title ?? "";
+  } catch {
+    return "";
+  }
+}
+
+async function logFocusSession(endTs: number, minutes: number, linkId: string): Promise<void> {
+  try {
+    const d = linkId ? await db.deadlines.get(Number(linkId)) : undefined;
+    await db.focusSessions.add({
+      deadlineId: d?.id,
+      label: d?.title ?? "Focus session",
+      minutes,
+      completed: true,
+      createdAt: endTs,
+    });
+  } catch {
+    /* history is best-effort */
+  }
+}
 
 const FIELD: CSSProperties = {
   background: "var(--background)",
@@ -41,7 +83,11 @@ export default function FocusPage() {
   const [running, setRunning] = useState(false);
   const [finished, setFinished] = useState(false);
   const [linkedId, setLinkedId] = useState("");
+  const [alarmOn, setAlarmOn] = useState(false);
+  const [alarmCapable, setAlarmCapable] = useState(false);
+  const [armedAt, setArmedAt] = useState<number | null>(null);
   const savedRef = useRef(false);
+  const restoredRef = useRef(false);
 
   useEffect(() => setMounted(true), []);
 
@@ -52,6 +98,88 @@ export default function FocusPage() {
   );
 
   const endsAtRef = useRef<number | null>(null);
+
+  // Restore a session that was running when the app was killed / swiped away.
+  useEffect(() => {
+    let saved: FocusPersist | null = null;
+    try {
+      const raw = localStorage.getItem(FOCUS_STATE_KEY);
+      if (raw) saved = JSON.parse(raw) as FocusPersist;
+    } catch {
+      saved = null;
+    }
+    if (saved) {
+      if (typeof saved.duration === "number" && DURATIONS.includes(saved.duration)) {
+        setDuration(saved.duration);
+      }
+      if (saved.linkedId) setLinkedId(saved.linkedId);
+      setAlarmOn(Boolean(saved.alarmOn));
+      if (saved.running && saved.endsAt) {
+        const left = Math.max(0, Math.round((saved.endsAt - Date.now()) / 1000));
+        if (left > 0) {
+          // Session still ticking — resume where it left off.
+          endsAtRef.current = saved.endsAt;
+          setSecondsLeft(left);
+          setRunning(true);
+          setFinished(false);
+          savedRef.current = false;
+          setArmedAt(saved.armedAt ?? null);
+          void focusLabel(saved.linkedId ?? "").then((label) =>
+            scheduleFocusEnd(saved.endsAt as number, label)
+          );
+        } else {
+          // Expired while the app was closed: show done, log once.
+          endsAtRef.current = saved.endsAt;
+          setSecondsLeft(0);
+          setRunning(false);
+          setFinished(true);
+          setArmedAt(null); // the Clock alarm rang with it — spent
+          const alreadyLogged = saved.loggedEndsAt === saved.endsAt;
+          savedRef.current = alreadyLogged;
+          if (!alreadyLogged) {
+            void logFocusSession(
+              saved.endsAt,
+              saved.duration ?? DURATIONS[0],
+              saved.linkedId ?? ""
+            );
+          }
+        }
+      } else {
+        setRunning(false);
+        setFinished(Boolean(saved.finished));
+        if (typeof saved.secondsLeft === "number" && saved.secondsLeft >= 0) {
+          setSecondsLeft(saved.secondsLeft);
+        }
+        setArmedAt(saved.armedAt ?? null);
+        savedRef.current = Boolean(saved.finished);
+      }
+    }
+    restoredRef.current = true;
+    setAlarmCapable(systemAlarmAvailable());
+  }, []);
+
+  // Persist state (skip before restore so defaults never clobber stored state).
+  useEffect(() => {
+    if (!restoredRef.current) return;
+    try {
+      localStorage.setItem(
+        FOCUS_STATE_KEY,
+        JSON.stringify({
+          duration,
+          secondsLeft: running ? 0 : secondsLeft, // running sessions restore from endsAt
+          running,
+          endsAt: endsAtRef.current,
+          linkedId,
+          finished,
+          loggedEndsAt: finished ? endsAtRef.current ?? null : null,
+          armedAt,
+          alarmOn,
+        })
+      );
+    } catch {
+      /* private mode */
+    }
+  }, [duration, secondsLeft, running, finished, linkedId, armedAt, alarmOn]);
 
   useEffect(() => {
     if (!running) return;
@@ -78,18 +206,51 @@ export default function FocusPage() {
     savedRef.current = true;
     setRunning(false);
     setFinished(true);
+    setArmedAt(null); // the Clock alarm rang with the session — spent
     if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
       navigator.vibrate([140, 70, 140]);
     }
-    const linked = (deadlines || []).find((d) => d.id === Number(linkedId));
-    void db.focusSessions.add({
-      deadlineId: linked?.id,
-      label: linked ? linked.title : "Focus session",
-      minutes: duration,
-      completed: true,
-      createdAt: Date.now(),
-    });
-  }, [running, secondsLeft, linkedId, deadlines, duration]);
+    void logFocusSession(endsAtRef.current ?? Date.now(), duration, linkedId);
+  }, [running, secondsLeft, linkedId, duration]);
+
+  /** Schedule the end-of-session notification; optionally arm the Clock alarm. */
+  async function armFeedback(): Promise<void> {
+    const end = endsAtRef.current;
+    if (!end) return;
+    const label = await focusLabel(linkedId);
+    await scheduleFocusEnd(end, label);
+    if (!alarmOn) return;
+    if (armedAt && Math.abs(armedAt - end) > 60_000) {
+      // Session was paused/resumed — move the alarm to the new end time.
+      await dismissSystemAlarm(new Date(armedAt));
+      setArmedAt(null);
+    }
+    if (!armedAt) {
+      const ok = await setSystemAlarm(`Orbit: ${label || "focus session"} ends`, new Date(end));
+      if (ok) setArmedAt(end);
+    }
+  }
+
+  function toggleAlarm(): void {
+    const next = !alarmOn;
+    setAlarmOn(next);
+    if (!next && armedAt) {
+      void dismissSystemAlarm(new Date(armedAt));
+      setArmedAt(null);
+    } else if (next && endsAtRef.current && !finished) {
+      const end = endsAtRef.current;
+      void focusLabel(linkedId).then(async (label) => {
+        const ok = await setSystemAlarm(`Orbit: ${label || "focus session"} ends`, new Date(end));
+        if (ok) setArmedAt(end);
+      });
+    }
+  }
+
+  function cancelArmedAlarm(): void {
+    if (!armedAt) return;
+    void dismissSystemAlarm(new Date(armedAt));
+    setArmedAt(null);
+  }
 
   function startPause() {
     if (finished || secondsLeft === 0) {
@@ -98,12 +259,17 @@ export default function FocusPage() {
       setSecondsLeft(duration * 60);
       endsAtRef.current = Date.now() + duration * 60 * 1000;
       setRunning(true);
+      void armFeedback();
       return;
     }
     if (running) {
       endsAtRef.current = null;
+      void cancelFocusEnd();
+      // Phone alarm stays armed (the Clock alarm is its own commitment);
+      // the cancel button below lets the user drop it when stopping early.
     } else {
       endsAtRef.current = Date.now() + secondsLeft * 1000;
+      void armFeedback();
     }
     setRunning((r) => !r);
   }
@@ -111,6 +277,7 @@ export default function FocusPage() {
   function reset() {
     savedRef.current = false;
     endsAtRef.current = null;
+    void cancelFocusEnd();
     setFinished(false);
     setRunning(false);
     setSecondsLeft(duration * 60);
@@ -119,6 +286,7 @@ export default function FocusPage() {
   function pickDuration(m: number) {
     savedRef.current = false;
     endsAtRef.current = null;
+    void cancelFocusEnd();
     setDuration(m);
     setFinished(false);
     setRunning(false);
@@ -220,6 +388,56 @@ export default function FocusPage() {
             </button>
           ))}
         </div>
+
+        {alarmCapable && (
+          <div className="space-y-2">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={alarmOn}
+              onClick={toggleAlarm}
+              className="press flex w-full items-center justify-between rounded-xl border px-3.5 py-2.5"
+              style={{
+                background: "var(--surface)",
+                borderColor: alarmOn ? "var(--accent)" : "var(--card-border)",
+              }}
+            >
+              <span className="flex items-center gap-2 text-xs font-semibold">
+                <AlarmClock size={14} style={{ color: "var(--accent)" }} />
+                Ring my phone alarm when done
+              </span>
+              <span
+                className="relative h-6 w-10 shrink-0 rounded-full"
+                style={{ background: alarmOn ? "var(--accent)" : "var(--card-border)" }}
+              >
+                <span
+                  className="absolute top-0.5 h-5 w-5 rounded-full transition-all duration-200"
+                  style={{
+                    left: alarmOn ? 20 : 4,
+                    background: alarmOn ? "var(--accent-ink)" : "var(--muted)",
+                  }}
+                />
+              </span>
+            </button>
+            {armedAt !== null && (
+              <div className="flex items-center justify-between gap-2 rounded-xl border px-3.5 py-2" style={{ borderColor: "var(--card-border)" }}>
+                <p className="tnum min-w-0 text-[11px]" style={{ color: "var(--muted)" }}>
+                  Phone alarm {new Date(armedAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} · your Clock app&apos;s ringtone
+                </p>
+                {!running && !finished && (
+                  <button
+                    type="button"
+                    onClick={cancelArmedAlarm}
+                    className="press shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-semibold"
+                    style={{ borderColor: "var(--card-border)", color: "var(--warning)" }}
+                  >
+                    Cancel phone alarm
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex gap-2">
           <button
