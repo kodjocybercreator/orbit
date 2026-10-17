@@ -1,7 +1,7 @@
 import { getSettings } from "./db";
 
-export const APP_VERSION = "1.1";
-export const APP_VERSION_CODE = 3;
+export const APP_VERSION = "1.2";
+export const APP_VERSION_CODE = 4;
 
 export interface UpdateManifest {
   version: string;

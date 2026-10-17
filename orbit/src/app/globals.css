@@ -65,8 +65,10 @@ body {
   font-feature-settings: "ss01";
   min-height: 100dvh;
   overscroll-behavior-y: none;
-  /* Fixes content sliding under the Android status bar */
-  padding-top: max(env(safe-area-inset-top), 0px);
+  /* Keeps content clear of the Android status bar. env() works where the
+     browser reports it; --native-safe-top is set at runtime by PlatformInit
+     on Android 15+ where env() resolves to 0 under enforced edge-to-edge. */
+  padding-top: max(env(safe-area-inset-top), var(--native-safe-top, 0px));
   background-image: var(--grain);
   background-attachment: fixed;
 }

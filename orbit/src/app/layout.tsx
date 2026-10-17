@@ -35,6 +35,12 @@ export default function RootLayout({
   return (
     <html lang="en" className={outfit.variable}>
       <body className="antialiased">
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              'try{var t=localStorage.getItem("orbit-safe-top");if(t&&+t>0)document.documentElement.style.setProperty("--native-safe-top",t+"px")}catch(e){}',
+          }}
+        />
         <div className="mx-auto max-w-md min-h-[100dvh] flex flex-col">
           <main className="flex-1 px-4 pt-4 pb-28">{children}</main>
         </div>

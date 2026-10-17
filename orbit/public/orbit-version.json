@@ -1,6 +1,6 @@
 {
-  "version": "1.1",
-  "versionCode": 3,
-  "notes": "In-app updates, GPT-OSS 120B chat, reminder fixes",
+  "version": "1.2",
+  "versionCode": 4,
+  "notes": "Status-bar overlap fix, GPT-OSS 120B chat, in-app updates",
   "url": ""
 }
