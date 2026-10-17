@@ -55,7 +55,7 @@ The APK lands in `android/app/build/outputs/apk/debug/`.
 Orbit has two update paths:
 
 - **Web / PWA** — automatic. The service worker fetches new pages on every navigation and swaps itself in; when a new version takes control, a toast offers **Reload**. No action needed on your side beyond redeploying `out/`.
-- **Android APK** — the app checks an *update feed* once every 24 hours (and on demand from **Settings → Updates**). The default feed is the raw `orbit-version.json` from this repository's GitHub main branch; Settings can override it. When a newer `versionCode` appears, the app raises a system notification (once per version) and keeps a **Get update** banner until you install the new release. The feed is a tiny JSON file:
+- **Android APK** — the app checks the *update feed* on every launch and whenever it comes back to the foreground (at most once an hour, plus a manual check from **Settings → Updates**). The default feed is the raw `orbit-version.json` from this repository's GitHub main branch; Settings can override it. When a newer `versionCode` appears, the app raises a system notification with an **Update** action that jumps straight to the APK download (once per version — never repeated), and keeps a **Get update** banner until you install. The feed is a tiny JSON file:
 
 ```json
 {

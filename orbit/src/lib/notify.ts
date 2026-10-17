@@ -1,5 +1,6 @@
 import { LocalNotifications } from "@capacitor/local-notifications";
 import { Capacitor } from "@capacitor/core";
+import { Browser } from "@capacitor/browser";
 import { db, getSettings, type Deadline } from "./db";
 
 const ANDROID_CHANNEL = "orbit-reminders";
@@ -154,6 +155,7 @@ export async function notifyUpdateAvailable(update: {
   }
 
   try {
+    await ensureUpdateActionTypes();
     // Replace any previous update notification so retries never stack.
     await LocalNotifications.cancel({ notifications: [{ id: UPDATE_NOTIF_ID }] });
     await LocalNotifications.schedule({
@@ -161,9 +163,10 @@ export async function notifyUpdateAvailable(update: {
         {
           id: UPDATE_NOTIF_ID,
           title: `Orbit v${update.version} is ready to update`,
-          body: update.notes || "A new version of Orbit is available. Open the app to get it.",
+          body: update.notes || "A new version of Orbit is available.",
           schedule: { at: new Date(Date.now() + 1200) },
           channelId: UPDATE_CHANNEL,
+          actionTypeId: update.url ? UPDATE_ACTION_TYPE : undefined,
           extra: { kind: "update", versionCode: update.versionCode, url: update.url },
         },
       ],
@@ -176,4 +179,47 @@ export async function notifyUpdateAvailable(update: {
   } catch {
     /* best-effort */
   }
+}
+
+const ACTION_GET_UPDATE = "get-update";
+const UPDATE_ACTION_TYPE = "orbit-update-actions";
+let actionListenerReady = false;
+let actionTypesReady = false;
+
+/** Register the "Update" button used on the update notification (once). */
+async function ensureUpdateActionTypes(): Promise<void> {
+  if (actionTypesReady) return;
+  try {
+    await LocalNotifications.registerActionTypes({
+      types: [
+        {
+          id: UPDATE_ACTION_TYPE,
+          actions: [{ id: ACTION_GET_UPDATE, title: "Update" }],
+        },
+      ],
+    });
+    actionTypesReady = true;
+  } catch {
+    /* best-effort — notification still shows without the action button */
+  }
+}
+
+/**
+ * Tapping "Update" on the notification opens the download URL straight in the
+ * browser — no need to open the app first. Registered once from PlatformInit.
+ */
+export function registerUpdateAction(): void {
+  if (!notificationsSupported() || actionListenerReady) return;
+  actionListenerReady = true;
+  void LocalNotifications.addListener("localNotificationActionPerformed", (notification) => {
+    const extra = (notification.notification.extra || {}) as { kind?: string; url?: string };
+    if (extra.kind !== "update") return;
+    if (notification.actionId === ACTION_GET_UPDATE && extra.url) {
+      void Browser.open({ url: extra.url }).catch(() => {
+        /* no browser available */
+      });
+    }
+  }).catch(() => {
+    actionListenerReady = false;
+  });
 }

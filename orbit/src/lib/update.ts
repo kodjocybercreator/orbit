@@ -1,7 +1,7 @@
 import { getSettings } from "./db";
 
-export const APP_VERSION = "1.3";
-export const APP_VERSION_CODE = 5;
+export const APP_VERSION = "1.4";
+export const APP_VERSION_CODE = 6;
 
 /** Default update feed (GitHub raw) — works from the APK and the website alike.
  *  Overridable in Settings → Updates. */
@@ -16,7 +16,8 @@ export interface UpdateManifest {
 }
 
 const CHECK_KEY = "orbit-last-update-check";
-const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+// Check on launch and whenever the app resumes (min 1h apart).
+const CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const PENDING_KEY = "orbit-pending-update";
 
 /** Remember a discovered update so the banner reappears on every app open

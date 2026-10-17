@@ -37,29 +37,44 @@ export default function UpdateToasts() {
     navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
 
     let cancelled = false;
-    (async () => {
-      // A known update keeps showing until the app is actually that version —
-      // this is what the update notification leads back to.
-      let pending = clearPendingIfCurrent() ?? getPendingUpdate();
-      if (!pending && shouldAutoCheck()) {
-        const update = await checkForUpdate().catch(() => null);
-        if (cancelled || !update) return;
-        setPendingUpdate(update);
-        void notifyUpdateAvailable(update);
-        pending = update;
-      }
-      if (cancelled || !pending) return;
+
+    const showUpdate = (m: { version: string; notes?: string; url?: string }) => {
       setNotice({
         kind: "feed",
-        title: `Orbit v${pending.version} available`,
-        body: pending.notes || "A new version of Orbit is ready.",
-        url: pending.url,
+        title: `Orbit v${m.version} available`,
+        body: m.notes || "A new version of Orbit is ready.",
+        url: m.url,
       });
-    })();
+    };
+
+    /** Launch / resume: surface a known update, else hit the feed (hourly max). */
+    const runCheck = async () => {
+      const pending = clearPendingIfCurrent() ?? getPendingUpdate();
+      if (pending) {
+        showUpdate(pending);
+        return;
+      }
+      if (!shouldAutoCheck()) return;
+      const update = await checkForUpdate().catch(() => null);
+      if (cancelled || !update) return;
+      setPendingUpdate(update);
+      void notifyUpdateAvailable(update);
+      showUpdate(update);
+    };
+
+    void runCheck();
+
+    const onVisible = () => {
+      if (!document.hidden) void runCheck();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
 
     return () => {
       cancelled = true;
       navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
     };
   }, []);
 
