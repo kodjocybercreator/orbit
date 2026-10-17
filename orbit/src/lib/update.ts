@@ -6,7 +6,7 @@ export const APP_VERSION_CODE = 5;
 /** Default update feed (GitHub raw) — works from the APK and the website alike.
  *  Overridable in Settings → Updates. */
 export const DEFAULT_FEED_URL =
-  "https://raw.githubusercontent.com/kodjocybercreator/orbit/main/orbit-version.json";
+  "https://raw.githubusercontent.com/kodjocybercreator/orbit/main/orbit/public/orbit-version.json";
 
 export interface UpdateManifest {
   version: string;
