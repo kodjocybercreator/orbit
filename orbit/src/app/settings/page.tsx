@@ -10,7 +10,9 @@ import {
   type Settings,
 } from "@/lib/db";
 import { ensurePermission, rescheduleAllReminders } from "@/lib/notify";
-import { Bell, Database, Download, KeyRound, Trash2, Upload, User, Wallet } from "lucide-react";
+import { checkForUpdate, recordCheck, APP_VERSION } from "@/lib/update";
+import type { UpdateManifest } from "@/lib/update";
+import { Bell, Database, Download, KeyRound, RefreshCw, Trash2, Upload, User, Wallet } from "lucide-react";
 
 const inputStyle = {
   background: "var(--surface)",
@@ -39,6 +41,9 @@ export default function SettingsPage() {
   const [weekStart, setWeekStart] = useState<0 | 1>(0);
   const [apiKey, setApiKey] = useState("");
   const [notif, setNotif] = useState(true);
+  const [feedUrl, setFeedUrl] = useState("");
+  const [updateMsg, setUpdateMsg] = useState<{ ok: boolean; text: string; url?: string } | null>(null);
+  const [checking, setChecking] = useState(false);
   const [saved, setSaved] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [dataMsg, setDataMsg] = useState<string | null>(null);
@@ -54,6 +59,7 @@ export default function SettingsPage() {
       setWeekStart(s.weekStart ?? 0);
       setApiKey(s.groqApiKey || "");
       setNotif(s.notificationsOn !== false);
+      setFeedUrl(s.updateFeedUrl || "");
     });
   }, []);
 
@@ -65,9 +71,36 @@ export default function SettingsPage() {
       currency: currency.trim().slice(0, 4) || "$",
       weekStart,
       groqApiKey: apiKey.trim() || undefined,
+      updateFeedUrl: feedUrl.trim() || undefined,
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  }
+
+  async function onCheckUpdate() {
+    setChecking(true);
+    setUpdateMsg(null);
+    try {
+      const trimmed = feedUrl.trim();
+      if (trimmed && !/^https?:\/\//.test(trimmed)) {
+        setUpdateMsg({ ok: false, text: "Feed URL must start with http:// or https://" });
+        return;
+      }
+      if (trimmed) await saveSettings({ updateFeedUrl: trimmed });
+      recordCheck();
+      const update: UpdateManifest | null = await checkForUpdate(trimmed || undefined);
+      if (update) {
+        setUpdateMsg({
+          ok: true,
+          text: `Orbit v${update.version} is available — you have v${APP_VERSION}.`,
+          url: update.url,
+        });
+      } else {
+        setUpdateMsg({ ok: true, text: `You're on the latest version (v${APP_VERSION}).` });
+      }
+    } finally {
+      setChecking(false);
+    }
   }
 
   async function toggleNotif() {
@@ -113,6 +146,7 @@ export default function SettingsPage() {
       setWeekStart(s.weekStart ?? 0);
       setApiKey(s.groqApiKey || "");
       setNotif(s.notificationsOn !== false);
+      setFeedUrl(s.updateFeedUrl || "");
       setDataMsg("Backup imported.");
     } catch {
       setDataMsg("Import failed — not a valid Orbit backup file.");
@@ -128,9 +162,10 @@ export default function SettingsPage() {
     setBudget(String(s.weeklyBudget));
     setCurrency(s.currency || "$");
     setWeekStart(s.weekStart ?? 0);
-    setApiKey(s.groqApiKey || "");
-    setNotif(s.notificationsOn !== false);
-    setDataMsg("All data cleared.");
+      setApiKey(s.groqApiKey || "");
+      setNotif(s.notificationsOn !== false);
+      setFeedUrl(s.updateFeedUrl || "");
+      setDataMsg("All data cleared.");
   }
 
   if (!mounted || !settings) return null;
@@ -260,6 +295,56 @@ export default function SettingsPage() {
 
       <section className="card space-y-3">
         <p className="label-cap flex items-center gap-1.5">
+          <RefreshCw size={13} /> Updates
+        </p>
+        <label className="block space-y-1.5">
+          <FieldLabel icon={<Download size={13} />}>Update feed URL (optional)</FieldLabel>
+          <input
+            type="url"
+            value={feedUrl}
+            onChange={(e) => setFeedUrl(e.target.value)}
+            placeholder="https://example.com/orbit-version.json"
+            autoComplete="off"
+            className="w-full rounded-xl border px-3 py-2.5 text-sm outline-none"
+            style={inputStyle}
+          />
+        </label>
+        <button
+          type="button"
+          onClick={onCheckUpdate}
+          disabled={checking}
+          className="press w-full rounded-xl border py-2.5 text-xs font-semibold disabled:opacity-60"
+          style={{ borderColor: "var(--card-border)", color: "var(--foreground)" }}
+        >
+          {checking ? "Checking…" : "Check for updates"}
+        </button>
+        {updateMsg && (
+          <div className="space-y-1.5 text-center">
+            <p className="text-xs font-semibold" style={{ color: updateMsg.ok ? "var(--success)" : "var(--danger)" }}>
+              {updateMsg.text}
+            </p>
+            {updateMsg.ok && updateMsg.url && (
+              <a
+                href={updateMsg.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="press inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold"
+                style={{ background: "var(--accent)", color: "var(--accent-ink)" }}
+              >
+                <Download size={13} />
+                Get update
+              </a>
+            )}
+          </div>
+        )}
+        <p className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
+          Web installs update themselves automatically. APK installs check the feed above once a day —
+          point it at a hosted orbit-version.json to get a download prompt when a new release exists.
+        </p>
+      </section>
+
+      <section className="card space-y-3">
+        <p className="label-cap flex items-center gap-1.5">
           <Database size={13} /> Data
         </p>
         <div className="grid grid-cols-2 gap-2">
@@ -327,7 +412,7 @@ export default function SettingsPage() {
       </section>
 
       <p className="pb-2 text-center text-[11px] leading-relaxed" style={{ color: "var(--muted)" }}>
-        Orbit v1.0 · Local-first · data never leaves this device except AI calls
+        Orbit v{APP_VERSION} · Local-first · data never leaves this device except AI calls
       </p>
     </div>
   );

@@ -88,6 +88,7 @@ export interface Settings {
   weekStart?: 0 | 1; // 0=Sunday, 1=Monday
   notificationsOn?: boolean;
   onboarded?: boolean;
+  updateFeedUrl?: string;
 }
 
 export class OrbitDB extends Dexie {
@@ -334,6 +335,7 @@ export async function importAllData(json: string): Promise<void> {
     if (typeof s.currency === "string" && s.currency.length > 0) settingsPatch.currency = s.currency.slice(0, 4);
     if (s.weekStart === 0 || s.weekStart === 1) settingsPatch.weekStart = s.weekStart;
     if (typeof s.groqApiKey === "string" && s.groqApiKey) settingsPatch.groqApiKey = s.groqApiKey;
+    if (typeof s.updateFeedUrl === "string" && /^https?:\/\//.test(s.updateFeedUrl)) settingsPatch.updateFeedUrl = s.updateFeedUrl.slice(0, 300);
   }
 
   await db.transaction(

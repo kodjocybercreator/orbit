@@ -19,7 +19,7 @@ A local-first planning companion for university students. Orbit keeps your day, 
 - **Tailwind CSS** for styling; warm ink + amber "library lamp" palette.
 - **Dexie / IndexedDB** for all persistent state — nothing is sent anywhere by default.
 - **Capacitor 8** for the Android build (`com.student.orbit`).
-- **PWA** — web app manifest and a cache-first service worker for offline use.
+- **PWA** — web app manifest and an offline-first service worker (network-first pages, cached shell).
 
 ## Development
 
@@ -49,6 +49,34 @@ cd android
 ```
 
 The APK lands in `android/app/build/outputs/apk/debug/`.
+
+## App updates
+
+Orbit has two update paths:
+
+- **Web / PWA** — automatic. The service worker fetches new pages on every navigation and swaps itself in; when a new version takes control, a toast offers **Reload**. No action needed on your side beyond redeploying `out/`.
+- **Android APK** — the app checks an *update feed* once every 24 hours (and on demand from **Settings → Updates**). The feed is a tiny JSON file:
+
+```json
+{
+  "version": "1.2",
+  "versionCode": 4,
+  "notes": "What changed",
+  "url": "https://example.com/Orbit-v1.2.apk"
+}
+```
+
+Host `orbit-version.json` (already generated in `public/`) anywhere static, set its URL in **Settings → Updates**, and bump `versionCode` in both that file and `android/app/build.gradle` (keep `APP_VERSION_CODE` in `src/lib/update.ts` in sync). When `versionCode` beats the installed one, users get an **Get update** prompt that opens `url`.
+
+Releasing a new version:
+
+```bash
+# 1. bump APP_VERSION / APP_VERSION_CODE in src/lib/update.ts
+# 2. bump versionCode / versionName in android/app/build.gradle
+# 3. update public/orbit-version.json
+npm run build && npx cap sync android
+cd android && ./gradlew assembleRelease
+```
 
 ## Privacy
 

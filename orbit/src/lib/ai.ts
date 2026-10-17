@@ -12,7 +12,10 @@ import {
 import { planDayOffline, isPlanRequest, type DayPlan } from "./planner";
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const MODEL = "llama-3.3-70b-versatile";
+// Groq retired llama-3.3-70b-versatile (Aug 2026). GPT-OSS 120B is their
+// recommended replacement: production, 131K context, free-tier eligible.
+// GPT-OSS 20B is the safety-net fallback if the primary is ever retired too.
+const MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"] as const;
 const TIMEOUT_MS = 20_000;
 
 export interface AIResult {
@@ -119,26 +122,56 @@ async function askGroq(userMessage: string, history: { role: "user" | "orbit"; t
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(GROQ_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${settings.groqApiKey}`,
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        messages,
-        temperature: 0.6,
-        max_tokens: 600,
-        response_format: { type: "json_object" },
-      }),
-      signal: controller.signal,
-    });
+    let res: Response | null = null;
+    let usedModel = "";
+    for (const model of MODELS) {
+      const attempt = await fetch(GROQ_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${settings.groqApiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          reasoning_effort: "low",
+          max_completion_tokens: 2000,
+          response_format: { type: "json_object" },
+        }),
+        signal: controller.signal,
+      });
+      usedModel = model;
+      if (attempt.ok) {
+        res = attempt;
+        break;
+      }
+      // 404 / "model_decommissioned" -> retired model, fall through to next
+      const retriable = attempt.status === 404 || attempt.status === 400;
+      if (!retriable) {
+        res = attempt;
+        break;
+      }
+      const bodyText = await attempt.text().catch(() => "");
+      if (/does not exist|decommissioned|model_not_found/i.test(bodyText)) {
+        res = null;
+        continue;
+      }
+      res = new Response(bodyText, { status: attempt.status, statusText: attempt.statusText });
+      break;
+    }
+
+    if (!res) {
+      return {
+        reply: "AI model unavailable (all configured models rejected). Try again later or remove your key to use offline plans.",
+        plan: [],
+        source: "ai",
+      };
+    }
 
     if (!res.ok) {
       const err = await res.text().catch(() => "");
       return {
-        reply: `AI request failed (${res.status}). ${res.status === 401 ? "Check your API key in Settings." : "Try again shortly."} ${err.slice(0, 100)}`.trim(),
+        reply: `AI request failed (${res.status}${usedModel ? ` · ${usedModel}` : ""}). ${res.status === 401 ? "Check your API key in Settings." : "Try again shortly."} ${err.slice(0, 100)}`.trim(),
         plan: [],
         source: "ai",
       };

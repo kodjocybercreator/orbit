@@ -4,6 +4,7 @@ import "./globals.css";
 import BottomNav from "@/components/BottomNav";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import PlatformInit from "@/components/PlatformInit";
+import UpdateToasts from "@/components/UpdateToasts";
 
 const outfit = Outfit({
   subsets: ["latin"],
@@ -40,6 +41,7 @@ export default function RootLayout({
         <BottomNav />
         <ServiceWorkerRegister />
         <PlatformInit />
+        <UpdateToasts />
       </body>
     </html>
   );
