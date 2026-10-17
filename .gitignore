@@ -1,0 +1,7 @@
+# Machine-local Android tooling (JDK/SDK) — not part of the project
+android-tools/
+
+# Build artifacts
+Orbit-*.apk
+*.apk
+*.aab
