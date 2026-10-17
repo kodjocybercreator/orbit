@@ -2,15 +2,21 @@
 
 import { useEffect, useState, FormEvent } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db, formatDue, type Deadline } from "@/lib/db";
+import { db, formatDue, type Deadline, type RemindType } from "@/lib/db";
 import { scheduleDeadlineReminder, cancelDeadlineReminders } from "@/lib/notify";
-import { Check, ChevronDown, ClipboardList, Pencil, Plus, Trash2, X } from "lucide-react";
+import { AlarmClock, Bell, BellOff, Check, ChevronDown, ClipboardList, Pencil, Plus, Trash2, X } from "lucide-react";
 
 const FILTERS = [
   { key: "all", label: "All" },
   { key: "week", label: "This week" },
   { key: "overdue", label: "Overdue" },
 ] as const;
+
+const REMINDS = [
+  { key: "quiet" as const, label: "Quiet", hint: "Silent notice, no sound" },
+  { key: "sound" as const, label: "Sound", hint: "Notifies with a sound" },
+  { key: "alarm" as const, label: "Alarm", hint: "Phone-clock alarm when due today; loud notice otherwise" },
+];
 
 type FilterKey = (typeof FILTERS)[number]["key"];
 
@@ -35,6 +41,7 @@ export default function DeadlinesPage() {
   const [course, setCourse] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [hours, setHours] = useState("");
+  const [remind, setRemind] = useState<RemindType>("sound");
   const [confirmId, setConfirmId] = useState<number | null>(null);
   const [showDone, setShowDone] = useState(false);
 
@@ -48,6 +55,7 @@ export default function DeadlinesPage() {
     setCourse("");
     setDueDate("");
     setHours("");
+    setRemind("sound");
     setShowForm(false);
   }
 
@@ -57,6 +65,7 @@ export default function DeadlinesPage() {
     setCourse(d.course || "");
     setDueDate(toLocalInput(d.dueAt));
     setHours(d.estimatedHours ? String(d.estimatedHours) : "");
+    setRemind(d.remind ?? "sound");
     setShowForm(true);
     setConfirmId(null);
   }
@@ -71,6 +80,7 @@ export default function DeadlinesPage() {
       course: course.trim() || undefined,
       dueAt,
       estimatedHours: hours ? Number(hours) : undefined,
+      remind,
     };
     if (editing?.id) {
       await cancelDeadlineReminders(editing.id);
@@ -197,6 +207,34 @@ export default function DeadlinesPage() {
               style={inputStyle}
             />
           </div>
+          <div className="space-y-1.5">
+            <span className="label-cap" style={{ color: "var(--muted)" }}>
+              Reminder
+            </span>
+            <div className="flex gap-1.5">
+              {REMINDS.map((r) => (
+                <button
+                  key={r.key}
+                  type="button"
+                  title={r.hint}
+                  onClick={() => setRemind(r.key)}
+                  className="press flex flex-1 items-center justify-center gap-1.5 rounded-xl border py-2 text-xs font-semibold"
+                  style={
+                    remind === r.key
+                      ? { background: "var(--accent)", borderColor: "var(--accent)", color: "var(--accent-ink)" }
+                      : { borderColor: "var(--card-border)", color: "var(--muted)", background: "var(--surface)" }
+                  }
+                >
+                  {r.key === "quiet" ? <BellOff size={13} /> : r.key === "sound" ? <Bell size={13} /> : <AlarmClock size={13} />}
+                  {r.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] leading-relaxed" style={{ color: "var(--muted)" }}>
+              {REMINDS.find((r) => r.key === remind)?.hint}
+              {remind === "alarm" && " — pick today's due time to arm it."}
+            </p>
+          </div>
           <div className="flex gap-2">
             <button
               type="submit"
@@ -265,6 +303,11 @@ export default function DeadlinesPage() {
                     ) : null}
                   </p>
                 </div>
+                {d.remind === "alarm" ? (
+                  <AlarmClock size={13} className="shrink-0" style={{ color: "var(--warning)" }} aria-label="Clock alarm reminder" />
+                ) : d.remind === "quiet" ? (
+                  <BellOff size={13} className="shrink-0" style={{ color: "var(--muted)" }} aria-label="Quiet reminder" />
+                ) : null}
                 <span
                   className="tnum shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold"
                   style={

@@ -1,7 +1,7 @@
 import { getSettings } from "./db";
 
-export const APP_VERSION = "1.6";
-export const APP_VERSION_CODE = 8;
+export const APP_VERSION = "1.7";
+export const APP_VERSION_CODE = 9;
 
 /** Default update feed (GitHub raw) — works from the APK and the website alike.
  *  Overridable in Settings → Updates. */

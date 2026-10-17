@@ -1,6 +1,6 @@
 {
-  "version": "1.6",
-  "versionCode": 8,
-  "notes": "Chat send never drops a message: queueing, instant replies on tap, rate-limit retry",
-  "url": "https://github.com/kodjocybercreator/orbit/releases/download/v1.6/Orbit-v1.6.apk"
+  "version": "1.7",
+  "versionCode": 9,
+  "notes": "Task reminder types (quiet/sound/phone alarm), monthly budget with pace graphs, and AI money advice",
+  "url": ""
 }

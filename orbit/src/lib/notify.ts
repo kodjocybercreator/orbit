@@ -1,9 +1,11 @@
-import { LocalNotifications } from "@capacitor/local-notifications";
+import { LocalNotifications, type Importance } from "@capacitor/local-notifications";
 import { Capacitor } from "@capacitor/core";
 import { Browser } from "@capacitor/browser";
 import { db, getSettings, type Deadline } from "./db";
+import { setSystemAlarm, dismissSystemAlarm } from "./alarm";
 
 const ANDROID_CHANNEL = "orbit-reminders";
+const QUIET_CHANNEL = "orbit-quiet";
 const FOCUS_CHANNEL = "orbit-focus";
 const UPDATE_CHANNEL = "orbit-updates";
 const UPDATE_NOTIF_ID = 99001;
@@ -35,16 +37,25 @@ export async function ensurePermission(): Promise<boolean> {
   }
 }
 
-async function ensureChannel(id: string, name: string): Promise<void> {
+async function ensureChannel(
+  id: string,
+  name: string,
+  opts: { importance: number; sound?: string; vibration?: boolean; lights?: boolean } = {
+    importance: 5, // MAX: heads-up banner + sound even on the lock screen
+    sound: "default",
+    vibration: true,
+    lights: true,
+  }
+): Promise<void> {
   if (createdChannels.has(id) || !Capacitor.getPlatform().match(/android/)) return;
   try {
     await LocalNotifications.createChannel({
       id,
       name,
-      importance: 5, // MAX: heads-up banner + sound even on the lock screen
-      sound: "default",
-      vibration: true,
-      lights: true,
+      importance: opts.importance as Importance,
+      sound: opts.sound,
+      vibration: opts.vibration,
+      lights: opts.lights,
     });
     createdChannels.add(id);
   } catch {
@@ -73,13 +84,22 @@ function scheduleId(): number {
   return Math.floor(100000 + Math.random() * 900000);
 }
 
-/** Schedule a reminder for a deadline: 1 day before and 2 hours before (if still in the future). */
+/** Schedule a reminder for a deadline per its type: quiet notice, sounding
+ * notice, or phone-clock alarm (plus an exact due-time ping for sound/alarm). */
 export async function scheduleDeadlineReminder(d: Deadline): Promise<void> {
   if (!notificationsSupported()) return;
   if (!d.id || d.done) return;
   try {
     const settings = await getSettings();
     if (settings.notificationsOn === false) return;
+    const type = d.remind ?? "sound";
+    const channelId = type === "quiet" ? QUIET_CHANNEL : ANDROID_CHANNEL;
+    await ensurePermission();
+    if (type === "quiet") {
+      await ensureChannel(QUIET_CHANNEL, "Quiet reminders", { importance: 3 });
+    } else {
+      await ensureChannel(ANDROID_CHANNEL, "Deadline reminders");
+    }
 
     const offsets = [
       { ms: 24 * 3_600_000, title: `Due tomorrow: ${d.title}` },
@@ -89,7 +109,6 @@ export async function scheduleDeadlineReminder(d: Deadline): Promise<void> {
     for (const { ms, title } of offsets) {
       const at = d.dueAt - ms;
       if (at <= Date.now()) continue;
-      await ensurePermission();
       await LocalNotifications.schedule({
         notifications: [
           {
@@ -97,11 +116,43 @@ export async function scheduleDeadlineReminder(d: Deadline): Promise<void> {
             title,
             body: d.course ? `${d.course} · Orbit reminder` : "Orbit reminder",
             schedule: { at: new Date(at) },
+            channelId,
+            extra: { deadlineId: d.id, kind: "deadline" },
+          },
+        ],
+      });
+    }
+
+    // Sound + alarm types ring a notification at the exact due moment too.
+    if (type !== "quiet" && d.dueAt > Date.now()) {
+      await LocalNotifications.schedule({
+        notifications: [
+          {
+            id: scheduleId(),
+            title: `Due now: ${d.title}`,
+            body: d.course ? `${d.course} · time's up` : "Time's up",
+            schedule: { at: new Date(d.dueAt) },
             channelId: ANDROID_CHANNEL,
             extra: { deadlineId: d.id, kind: "deadline" },
           },
         ],
       });
+    }
+
+    // Phone Clock alarm — Clock intents carry no date, so only arm when the
+    // task is due later today. Skip if this exact due is already armed.
+    if (type === "alarm") {
+      const now = new Date();
+      const due = new Date(d.dueAt);
+      const dueToday = due.toDateString() === now.toDateString() && d.dueAt > Date.now() + 30_000;
+      const alreadyArmed = d.alarmAt && Math.abs(d.alarmAt - d.dueAt) < 1000;
+      if (dueToday && !alreadyArmed) {
+        if (d.alarmAt && d.alarmAt > Date.now()) {
+          await dismissSystemAlarm(new Date(d.alarmAt));
+        }
+        const ok = await setSystemAlarm(d.title, due);
+        if (ok && d.id) await db.deadlines.update(d.id, { alarmAt: d.dueAt });
+      }
     }
   } catch {
     /* scheduling is best-effort */
@@ -116,6 +167,16 @@ export async function cancelDeadlineReminders(deadlineId: number): Promise<void>
       .filter((n) => (n.extra as { deadlineId?: number })?.deadlineId === deadlineId)
       .map((n) => n.id);
     if (ids.length) await LocalNotifications.cancel({ notifications: ids.map((id) => ({ id })) });
+  } catch {
+    /* best-effort */
+  }
+  // Drop our Clock alarm — only if it hasn't rung yet (never touch other alarms).
+  try {
+    const d = await db.deadlines.get(deadlineId);
+    if (d?.alarmAt) {
+      if (d.alarmAt > Date.now()) await dismissSystemAlarm(new Date(d.alarmAt));
+      await db.deadlines.update(deadlineId, { alarmAt: undefined });
+    }
   } catch {
     /* best-effort */
   }

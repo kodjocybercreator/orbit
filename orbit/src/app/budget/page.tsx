@@ -2,8 +2,9 @@
 
 import { useEffect, useState, FormEvent } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db, getBudgetState, getSettings } from "@/lib/db";
-import { ArrowDownRight, Plus, Trash2, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { db, getBudgetState } from "@/lib/db";
+import { ArrowDownRight, MessageCircle, Plus, Trash2, X } from "lucide-react";
 
 const CATEGORIES = ["Food", "Transport", "School", "Fun", "Bills", "Other"];
 
@@ -13,7 +14,12 @@ const inputStyle = {
   color: "var(--foreground)",
 };
 
+const CHART_W = 320;
+const PACE_H = 96;
+const BARS_H = 40;
+
 export default function BudgetPage() {
+  const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [amount, setAmount] = useState("");
@@ -24,7 +30,6 @@ export default function BudgetPage() {
   useEffect(() => setMounted(true), []);
 
   const budget = useLiveQuery(() => getBudgetState(), []);
-  const settings = useLiveQuery(() => getSettings(), []);
 
   async function add(e: FormEvent) {
     e.preventDefault();
@@ -47,26 +52,54 @@ export default function BudgetPage() {
     setConfirmId(null);
   }
 
-  if (!mounted || !budget || !settings) return null;
+  function askOrbitMoney() {
+    try {
+      localStorage.setItem(
+        "orbit-prefill",
+        "Review my spending this month: how am I doing against my budget, what's the one thing I should cut, and can I afford a small treat right now?"
+      );
+    } catch {
+      /* private mode */
+    }
+    void router.push("/chat");
+  }
 
-  const budgetSize = Math.max(1, settings.weeklyBudget);
-  const pct = Math.max(0, Math.min(100, (budget.spent / budgetSize) * 100));
-  const over = budget.left < 0;
-  const low = !over && budget.left / budgetSize < 0.2;
+  if (!mounted || !budget) return null;
+
+  const { monthlyBudget, currency, spent, left, daysLeft, safeToSpend, idealSpent, overPace } = budget;
+  const pct = Math.max(0, Math.min(100, (spent / Math.max(1, monthlyBudget)) * 100));
+  const over = left < 0;
+  const low = !over && left / monthlyBudget < 0.15;
   const barColor = over ? "var(--danger)" : low ? "var(--warning)" : "var(--success)";
   const heroColor = over ? "var(--danger)" : low ? "var(--warning)" : "var(--success)";
+  const paceDiff = idealSpent - spent;
 
-  const byCategory = CATEGORIES.map((c) => ({
-    name: c,
-    total: budget.expenses
-      .filter((e) => e.category === c)
-      .reduce((sum, e) => sum + e.amount, 0),
-  }))
-    .filter((c) => c.total > 0)
-    .sort((a, b) => b.total - a.total);
-  const maxCategory = byCategory[0]?.total ?? 1;
+  const maxCategory = budget.byCategory[0]?.total ?? 1;
+  const monthExpenses = [...budget.expenses].sort((a, b) => b.spentAt - a.spentAt);
+  const maxMonth = Math.max(...budget.monthTotals.map((m) => m.total), monthlyBudget, 1);
 
-  const weekExpenses = [...budget.expenses].sort((a, b) => b.spentAt - a.spentAt);
+  // --- Pace chart: cumulative spend vs a flat ideal line ---
+  const xFor = (day: number) =>
+    2 + ((day - 1) / Math.max(1, budget.daysInMonth - 1)) * (CHART_W - 4);
+  const yFor = (v: number) =>
+    PACE_H - 6 - (Math.min(Math.max(v, 0), monthlyBudget) / Math.max(1, monthlyBudget)) * (PACE_H - 14);
+  let cum = 0;
+  const actualPts = budget.daily
+    .map((d) => {
+      cum += d.total;
+      return `${xFor(d.day).toFixed(1)},${yFor(cum).toFixed(1)}`;
+    })
+    .join(" ");
+  const idealPts = `${xFor(1).toFixed(1)},${yFor(monthlyBudget / budget.daysInMonth).toFixed(1)} ${xFor(budget.daysInMonth).toFixed(1)},${yFor(monthlyBudget).toFixed(1)}`;
+  const todayX = xFor(budget.dayOfMonth);
+  const todayY = yFor(cum);
+
+  // --- Daily bars ---
+  const maxDaily = Math.max(...budget.daily.map((d) => d.total), 1);
+  const barSlot = CHART_W / budget.daysInMonth;
+  const barW = Math.max(1.5, barSlot - 1.5);
+
+  const list = budget.monthTotals;
 
   return (
     <div className="space-y-4 pt-2">
@@ -74,7 +107,7 @@ export default function BudgetPage() {
         <div>
           <h1 className="text-xl font-bold tracking-tight">Money</h1>
           <p className="mt-0.5 text-xs" style={{ color: "var(--muted)" }}>
-            This week&apos;s spending
+            Monthly budget · day {budget.dayOfMonth} of {budget.daysInMonth}
           </p>
         </div>
         <button
@@ -88,18 +121,19 @@ export default function BudgetPage() {
       </header>
 
       <section className="card">
-        <p className="label-cap">Left this week</p>
+        <p className="label-cap">Left this month</p>
         <p
           className="tnum mt-1 text-[40px] font-bold leading-none tracking-tight"
           style={{ color: heroColor }}
         >
-          {budget.currency}
-          {budget.left.toFixed(2)}
+          {currency}
+          {left.toFixed(2)}
         </p>
         <p className="tnum mt-2 text-xs" style={{ color: "var(--muted)" }}>
-          {budget.currency}
-          {budget.spent.toFixed(2)} spent of {budget.currency}
-          {settings.weeklyBudget.toFixed(2)}
+          {currency}
+          {spent.toFixed(2)} spent of {currency}
+          {monthlyBudget.toFixed(2)} · {currency}
+          {safeToSpend.toFixed(2)}/day safe for {daysLeft} {daysLeft === 1 ? "day" : "days"} left
         </p>
         <div
           className="mt-3 h-2 overflow-hidden rounded-full"
@@ -110,24 +144,179 @@ export default function BudgetPage() {
             style={{ width: `${pct}%`, background: barColor }}
           />
         </div>
-        {over && (
+        {over ? (
           <p className="mt-2 text-xs font-semibold" style={{ color: "var(--danger)" }}>
-            Over budget by {budget.currency}
-            {Math.abs(budget.left).toFixed(2)} — ease up for the rest of the week.
+            Over budget by {currency}
+            {Math.abs(left).toFixed(2)} — pause non-essentials until the month rolls over.
+          </p>
+        ) : overPace ? (
+          <p className="mt-2 text-xs font-semibold" style={{ color: "var(--warning)" }}>
+            Ahead of pace by {currency}
+            {paceDiff.toFixed(2)} — ideally you&apos;d be at {currency}
+            {idealSpent.toFixed(2)} by now.
+          </p>
+        ) : (
+          <p className="mt-2 text-xs font-semibold" style={{ color: "var(--success)" }}>
+            Under pace by {currency}
+            {Math.abs(paceDiff).toFixed(2)} — on track for {currency}
+            {monthlyBudget.toFixed(2)}.
           </p>
         )}
       </section>
 
-      {byCategory.length > 0 && (
+      <section className="card space-y-1">
+        <div className="flex items-baseline justify-between">
+          <p className="label-cap">Spending pace</p>
+          <div className="flex items-center gap-3 text-[10px]" style={{ color: "var(--muted)" }}>
+            <span className="flex items-center gap-1">
+              <span
+                className="inline-block h-0.5 w-4 rounded-full"
+                style={{ background: overPace ? "var(--danger)" : "var(--accent)" }}
+              />
+              Actual
+            </span>
+            <span className="flex items-center gap-1">
+              <span
+                className="inline-block h-0 w-4 border-t border-dashed"
+                style={{ borderColor: "var(--muted)" }}
+              />
+              Ideal
+            </span>
+          </div>
+        </div>
+        <svg
+          viewBox={`0 0 ${CHART_W} ${PACE_H}`}
+          className="w-full"
+          role="img"
+          aria-label="Cumulative spending versus ideal pace this month"
+        >
+          <line
+            x1={xFor(1)}
+            y1={yFor(monthlyBudget / 2)}
+            x2={xFor(budget.daysInMonth)}
+            y2={yFor(monthlyBudget / 2)}
+            stroke="var(--card-border)"
+            strokeWidth="1"
+            strokeDasharray="2 4"
+          />
+          <line
+            x1={xFor(1)}
+            y1={yFor(monthlyBudget)}
+            x2={xFor(budget.daysInMonth)}
+            y2={yFor(monthlyBudget)}
+            stroke="var(--card-border)"
+            strokeWidth="1"
+          />
+          <polyline points={idealPts} fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeDasharray="5 4" />
+          {actualPts && (
+            <polyline
+              points={actualPts}
+              fill="none"
+              stroke={overPace ? "var(--danger)" : "var(--accent)"}
+              strokeWidth="2.5"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          )}
+          <circle cx={todayX} cy={todayY} r="3.5" fill={overPace ? "var(--danger)" : "var(--accent)"} />
+        </svg>
+        <p className="text-[10px]" style={{ color: "var(--muted)" }}>
+          Cumulative spend this month vs a flat {currency}
+          {(monthlyBudget / budget.daysInMonth).toFixed(2)}/day plan.
+        </p>
+      </section>
+
+      <section className="card space-y-1">
+        <div className="flex items-baseline justify-between">
+          <p className="label-cap">Daily spending</p>
+          <span className="tnum text-[10px]" style={{ color: "var(--muted)" }}>
+            peak {currency}
+            {maxDaily.toFixed(0)}
+          </span>
+        </div>
+        <svg
+          viewBox={`0 0 ${CHART_W} ${BARS_H}`}
+          className="w-full"
+          role="img"
+          aria-label="Spend per day this month"
+        >
+          {budget.daily.map((d) => {
+            const h = d.total > 0 ? Math.max(2, (d.total / maxDaily) * (BARS_H - 4)) : 1.5;
+            const x = (d.day - 1) * barSlot + 0.75;
+            const isToday = d.day === budget.dayOfMonth;
+            return (
+              <rect
+                key={d.day}
+                x={x}
+                y={BARS_H - h}
+                width={barW}
+                height={h}
+                rx={Math.min(1.5, barW / 2)}
+                fill={isToday ? "var(--accent)" : "var(--accent)"}
+                opacity={isToday ? 1 : 0.45}
+              />
+            );
+          })}
+        </svg>
+        <p className="text-[10px]" style={{ color: "var(--muted)" }}>
+          Day {budget.dayOfMonth} is the bright bar — each bar is that day&apos;s total.
+        </p>
+      </section>
+
+      <section className="card space-y-2">
+        <div className="flex items-baseline justify-between">
+          <p className="label-cap">Month by month</p>
+          <span className="text-[10px]" style={{ color: "var(--muted)" }}>
+            builds as history grows
+          </span>
+        </div>
+        <div className="flex h-24 items-end gap-1.5">
+          {list.map((m) => (
+            <div key={m.start} className="flex h-full flex-1 flex-col items-center justify-end gap-1">
+              <span className="tnum text-[9px]" style={{ color: m.current ? "var(--accent)" : "var(--muted)" }}>
+                {m.total > 0 ? `${Math.round((m.total / maxMonth) * 100)}%` : "–"}
+              </span>
+              <div
+                className="w-full rounded-t"
+                style={{
+                  height: `${Math.max(2, (m.total / maxMonth) * 70)}%`,
+                  background: m.current ? "var(--accent)" : "var(--card-border)",
+                }}
+              />
+              <span
+                className="text-[9px] font-semibold"
+                style={{ color: m.current ? "var(--accent)" : "var(--muted)" }}
+              >
+                {m.label}
+              </span>
+            </div>
+          ))}
+        </div>
+        <p className="text-[10px]" style={{ color: "var(--muted)" }}>
+          Six-month view of {currency}0 to {currency}
+          {maxMonth.toFixed(0)} — this is the graph that learns your habits over time.
+        </p>
+      </section>
+
+      <button
+        type="button"
+        onClick={askOrbitMoney}
+        className="press flex w-full items-center justify-center gap-2 rounded-xl border py-2.5 text-sm font-semibold"
+        style={{ borderColor: "var(--accent)", color: "var(--accent)", background: "var(--surface)" }}
+      >
+        <MessageCircle size={15} /> Ask Orbit about my spending
+      </button>
+
+      {budget.byCategory.length > 0 && (
         <section className="card-flat">
           <p className="label-cap">Where it went</p>
           <ul className="mt-3 space-y-3">
-            {byCategory.map((c, i) => (
+            {budget.byCategory.map((c, i) => (
               <li key={c.name}>
                 <div className="flex items-baseline justify-between">
                   <span className="text-sm font-semibold">{c.name}</span>
                   <span className="tnum text-xs font-semibold" style={{ color: "var(--muted)" }}>
-                    {budget.currency}
+                    {currency}
                     {c.total.toFixed(2)}
                   </span>
                 </div>
@@ -160,7 +349,7 @@ export default function BudgetPage() {
             min="0.01"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            placeholder={`Amount (${budget.currency})`}
+            placeholder={`Amount (${currency})`}
             required
             className="tnum w-full rounded-xl border px-3 py-2.5 text-sm outline-none"
             style={inputStyle}
@@ -205,12 +394,12 @@ export default function BudgetPage() {
 
       <section>
         <div className="mb-2 flex items-baseline justify-between">
-          <h2 className="label-cap">This week&apos;s expenses</h2>
+          <h2 className="label-cap">This month&apos;s expenses</h2>
           <span className="tnum text-xs font-semibold" style={{ color: "var(--muted)" }}>
             {budget.expenses.length} {budget.expenses.length === 1 ? "entry" : "entries"}
           </span>
         </div>
-        {weekExpenses.length === 0 ? (
+        {monthExpenses.length === 0 ? (
           <div className="card-flat flex items-center gap-3 py-4">
             <span
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
@@ -219,12 +408,13 @@ export default function BudgetPage() {
               <ArrowDownRight size={16} style={{ color: "var(--success)" }} />
             </span>
             <p className="text-sm" style={{ color: "var(--muted)" }}>
-              Nothing spent yet this week. Full budget intact.
+              Nothing spent yet this month. Full budget intact — the graph starts with your
+              first entry.
             </p>
           </div>
         ) : (
           <ul className="card overflow-hidden p-0">
-            {weekExpenses.map((e, i) => (
+            {monthExpenses.map((e, i) => (
               <li
                 key={e.id}
                 className={`flex items-center gap-3 px-4 py-3 ${i > 0 ? "border-t" : ""}`}
@@ -244,7 +434,7 @@ export default function BudgetPage() {
                   </p>
                 </div>
                 <span className="tnum shrink-0 text-sm font-semibold">
-                  {budget.currency}
+                  {currency}
                   {e.amount.toFixed(2)}
                 </span>
                 <button

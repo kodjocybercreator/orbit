@@ -21,10 +21,26 @@ export default function ChatPage() {
   const busyRef = useRef(false);
   const queueRef = useRef<QueuedAsk[]>([]);
   const lastTsRef = useRef(0);
+  const prefillUsedRef = useRef(false);
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // The Money page hands off a pre-written question via localStorage.
+  useEffect(() => {
+    if (!mounted || prefillUsedRef.current) return;
+    prefillUsedRef.current = true;
+    let pre: string | null = null;
+    try {
+      pre = localStorage.getItem("orbit-prefill");
+      localStorage.removeItem("orbit-prefill");
+    } catch {
+      /* private mode */
+    }
+    if (pre && pre.trim()) send(pre);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted]);
 
   // Last 150 messages only — the full table made long chats janky over time.
   const messages =

@@ -57,14 +57,17 @@ export async function planDayOffline(): Promise<DayPlan> {
     });
   }
 
-  // Budget-aware quick win
-  if (budget.left < budget.weeklyBudget * 0.2 && budget.left < 20) {
+  // Budget-aware quick win (monthly model: over pace or nearly out)
+  if (budget.left <= 0 || budget.overPace || budget.left < budget.monthlyBudget * 0.1) {
     items.push({
       title: "Eat in today",
-      why: `Only ${budget.currency}${budget.left.toFixed(0)} left this week — cook or campus canteen`,
+      why:
+        budget.left > 0
+          ? `${budget.currency}${budget.left.toFixed(0)} left of ${budget.currency}${budget.monthlyBudget.toFixed(0)} this month${budget.overPace ? " · ahead of pace" : ""}`
+          : `Over the month's budget by ${budget.currency}${Math.abs(budget.left).toFixed(0)}`,
       minutes: 30,
     });
-    tradeoffs.push("Skipping takeout keeps the rest of the week flexible.");
+    tradeoffs.push("Skipping takeout protects the rest of the month.");
   }
 
   // Pick top deadlines by urgency × remaining effort

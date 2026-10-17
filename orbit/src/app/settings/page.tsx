@@ -49,7 +49,8 @@ export default function SettingsPage() {
   const [name, setName] = useState("");
   const [budget, setBudget] = useState("50");
   const [currency, setCurrency] = useState("$");
-  const [weekStart, setWeekStart] = useState<0 | 1>(0);
+  const [income, setIncome] = useState("");
+  const [incomeCadence, setIncomeCadence] = useState<"weekly" | "biweekly" | "monthly">("monthly");
   const [apiKey, setApiKey] = useState("");
   const [notif, setNotif] = useState(true);
   const [feedUrl, setFeedUrl] = useState("");
@@ -65,9 +66,12 @@ export default function SettingsPage() {
     getSettings().then((s) => {
       setLocal(s);
       setName(s.name || "");
-      setBudget(String(s.weeklyBudget));
+      setBudget(
+        String(s.monthlyBudget ?? Math.round(s.weeklyBudget * (52 / 12) * 100) / 100)
+      );
       setCurrency(s.currency || "$");
-      setWeekStart(s.weekStart ?? 0);
+      setIncome(s.incomeAmount ? String(s.incomeAmount) : "");
+      setIncomeCadence(s.incomeCadence ?? "monthly");
       setApiKey(s.groqApiKey || "");
       setNotif(s.notificationsOn !== false);
       setFeedUrl(s.updateFeedUrl || "");
@@ -76,16 +80,27 @@ export default function SettingsPage() {
 
   async function save(e: FormEvent) {
     e.preventDefault();
+    const monthly = parseFloat(budget) || 50;
     await saveSettings({
       name: name.trim() || undefined,
-      weeklyBudget: parseFloat(budget) || 50,
+      monthlyBudget: monthly,
+      weeklyBudget: Math.round(monthly * (12 / 52) * 100) / 100,
+      incomeAmount: parseFloat(income) || undefined,
+      incomeCadence: income.trim() ? incomeCadence : undefined,
       currency: currency.trim().slice(0, 4) || "$",
-      weekStart,
       groqApiKey: apiKey.trim() || undefined,
       updateFeedUrl: feedUrl.trim() || undefined,
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  }
+
+  function applyIncome() {
+    const amt = parseFloat(income) || 0;
+    if (amt <= 0) return;
+    const perMonth =
+      incomeCadence === "weekly" ? amt * (52 / 12) : incomeCadence === "biweekly" ? amt * (26 / 12) : amt;
+    setBudget(String(Math.round(perMonth * 100) / 100));
   }
 
   async function onCheckUpdate() {
@@ -154,9 +169,10 @@ export default function SettingsPage() {
       const s = await getSettings();
       setLocal(s);
       setName(s.name || "");
-      setBudget(String(s.weeklyBudget));
+      setBudget(String(s.monthlyBudget ?? Math.round(s.weeklyBudget * (52 / 12) * 100) / 100));
       setCurrency(s.currency || "$");
-      setWeekStart(s.weekStart ?? 0);
+      setIncome(s.incomeAmount ? String(s.incomeAmount) : "");
+      setIncomeCadence(s.incomeCadence ?? "monthly");
       setApiKey(s.groqApiKey || "");
       setNotif(s.notificationsOn !== false);
       setFeedUrl(s.updateFeedUrl || "");
@@ -172,13 +188,14 @@ export default function SettingsPage() {
     const s = await getSettings();
     setLocal(s);
     setName(s.name || "");
-    setBudget(String(s.weeklyBudget));
+    setBudget(String(s.monthlyBudget ?? Math.round(s.weeklyBudget * (52 / 12) * 100) / 100));
     setCurrency(s.currency || "$");
-    setWeekStart(s.weekStart ?? 0);
-      setApiKey(s.groqApiKey || "");
-      setNotif(s.notificationsOn !== false);
-      setFeedUrl(s.updateFeedUrl || "");
-      setDataMsg("All data cleared.");
+    setIncome(s.incomeAmount ? String(s.incomeAmount) : "");
+    setIncomeCadence(s.incomeCadence ?? "monthly");
+    setApiKey(s.groqApiKey || "");
+    setNotif(s.notificationsOn !== false);
+    setFeedUrl(s.updateFeedUrl || "");
+    setDataMsg("All data cleared.");
   }
 
   if (!mounted || !settings) return null;
@@ -207,18 +224,19 @@ export default function SettingsPage() {
           </label>
           <div className="grid grid-cols-[1fr_auto] gap-2">
             <label className="block space-y-1.5">
-              <FieldLabel icon={<Wallet size={13} />}>Weekly budget</FieldLabel>
+              <FieldLabel icon={<Wallet size={13} />}>Monthly budget</FieldLabel>
               <input
                 type="number"
                 min="1"
+                step="any"
                 value={budget}
                 onChange={(e) => setBudget(e.target.value)}
                 className="tnum w-full rounded-xl border px-3 py-2.5 text-sm outline-none"
                 style={inputStyle}
               />
             </label>
-            <label className="block space-y-1.5">
-              <FieldLabel icon={<span className="text-xs font-bold">¤</span>}>Currency</FieldLabel>
+          <label className="block space-y-1.5">
+            <FieldLabel icon={<span className="text-xs font-bold">¤</span>}>Currency</FieldLabel>
               <input
                 value={currency}
                 onChange={(e) => setCurrency(e.target.value)}
@@ -255,18 +273,52 @@ export default function SettingsPage() {
               );
             })}
           </div>
-          <label className="block space-y-1.5">
-            <FieldLabel icon={<span className="text-xs font-bold">W</span>}>Week starts</FieldLabel>
-            <select
-              value={weekStart}
-              onChange={(e) => setWeekStart(Number(e.target.value) as 0 | 1)}
-              className="w-full appearance-none rounded-xl border px-3 py-2.5 text-sm outline-none"
-              style={inputStyle}
-            >
-              <option value={0}>Sunday</option>
-              <option value={1}>Monday</option>
-            </select>
-          </label>
+          <div className="rounded-xl border p-2.5" style={{ borderColor: "var(--card-border)", background: "var(--surface)" }}>
+            <span className="label-cap" style={{ color: "var(--muted)" }}>
+              Set budget from my income
+            </span>
+            <div className="mt-1.5 grid grid-cols-[1fr_auto_auto] gap-1.5">
+              <input
+                type="number"
+                min="1"
+                step="0.01"
+                inputMode="decimal"
+                value={income}
+                onChange={(e) => setIncome(e.target.value)}
+                placeholder={`Amount (${currency || "$"})`}
+                className="tnum min-w-0 rounded-lg border px-2.5 py-2 text-sm outline-none"
+                style={inputStyle}
+              />
+              <select
+                value={incomeCadence}
+                onChange={(e) => setIncomeCadence(e.target.value as "weekly" | "biweekly" | "monthly")}
+                className="rounded-lg border px-2 py-2 text-xs font-semibold outline-none"
+                style={inputStyle}
+              >
+                <option value="weekly">/ week</option>
+                <option value="biweekly">/ 2 wks</option>
+                <option value="monthly">/ month</option>
+              </select>
+              <button
+                type="button"
+                onClick={applyIncome}
+                disabled={!(parseFloat(income) > 0)}
+                className="press rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-40"
+                style={{ borderColor: "var(--accent)", color: "var(--accent)" }}
+              >
+                Apply
+              </button>
+            </div>
+            <p className="tnum mt-1.5 text-[11px]" style={{ color: "var(--muted)" }}>
+              {parseFloat(income) > 0
+                ? `≈ ${currency}${Math.round(
+                    (parseFloat(income) *
+                      (incomeCadence === "weekly" ? 52 / 12 : incomeCadence === "biweekly" ? 26 / 12 : 1)) *
+                      100
+                  ) / 100} / month → fills Monthly budget · press Save settings`
+                : "Enter what comes in and how often — Orbit converts it to a monthly budget."}
+            </p>
+          </div>
         </section>
 
         <section className="card space-y-2">

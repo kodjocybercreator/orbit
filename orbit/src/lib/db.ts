@@ -1,5 +1,7 @@
 import Dexie, { type Table } from "dexie";
 
+export type RemindType = "quiet" | "sound" | "alarm";
+
 export interface Deadline {
   id?: number;
   title: string;
@@ -8,6 +10,10 @@ export interface Deadline {
   estimatedHours?: number;
   done: boolean;
   createdAt: number;
+  /** How its reminder behaves: silent notice, sounding notice, or phone-clock alarm. */
+  remind?: RemindType;
+  /** Timestamp of an armed system Clock alarm (set when remind === "alarm" and due is today). */
+  alarmAt?: number;
 }
 
 export interface Expense {
@@ -79,16 +85,23 @@ export interface GradeCourse {
   semester?: string;
 }
 
+export type IncomeCadence = "weekly" | "biweekly" | "monthly";
+
 export interface Settings {
   id: number;
   name?: string;
   weeklyBudget: number;
+  /** Primary budget model: spend against the calendar month. */
+  monthlyBudget?: number;
   groqApiKey?: string;
   currency?: string;
-  weekStart?: 0 | 1; // 0=Sunday, 1=Monday
+  weekStart?: 0 | 1; // legacy (weekly model); kept for backup compatibility
   notificationsOn?: boolean;
   onboarded?: boolean;
   updateFeedUrl?: string;
+  /** Current financial status: what comes in, and how often. */
+  incomeAmount?: number;
+  incomeCadence?: IncomeCadence;
 }
 
 export class OrbitDB extends Dexie {
@@ -139,18 +152,105 @@ export function weekStart(ts = Date.now(), weekStartDay: 0 | 1 = 0): number {
   return d.getTime();
 }
 
-export async function getBudgetState() {
+export function monthStart(ts = Date.now()): number {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(1);
+  return d.getTime();
+}
+
+/** Monthly budget + everything the graph and AI need to talk about money. */
+export interface BudgetState {
+  monthlyBudget: number;
+  /** Derived monthly/4.345 — kept for legacy callers. */
+  weeklyBudget: number;
+  spent: number;
+  left: number;
+  currency: string;
+  /** Expenses within the current calendar month. */
+  expenses: Expense[];
+  daysInMonth: number;
+  dayOfMonth: number;
+  daysLeft: number;
+  /** Even daily allowance for the rest of the month. */
+  safeToSpend: number;
+  /** Where spending "should" be by end of today for a flat pace. */
+  idealSpent: number;
+  overPace: boolean;
+  byCategory: { name: string; total: number }[];
+  /** Daily spend, day 1 … today — feeds the graph. */
+  daily: { day: number; total: number }[];
+  /** Per-month totals (current + previous 5) — the graph learns over time. */
+  monthTotals: { start: number; label: string; total: number; current: boolean }[];
+}
+
+export async function getBudgetState(): Promise<BudgetState> {
   const settings = await getSettings();
-  const start = weekStart(Date.now(), settings.weekStart ?? 0);
-  const weekExpenses = await db.expenses.where("spentAt").aboveOrEqual(start).toArray();
-  const spent = weekExpenses.reduce((sum, e) => sum + e.amount, 0);
-  const left = settings.weeklyBudget - spent;
+  const monthly =
+    Number.isFinite(settings.monthlyBudget) && (settings.monthlyBudget as number) > 0
+      ? (settings.monthlyBudget as number)
+      : Math.max(1, Math.round(settings.weeklyBudget * (52 / 12) * 100) / 100);
+
+  const now = new Date();
+  const start = monthStart();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const dayOfMonth = now.getDate();
+  const daysLeft = daysInMonth - dayOfMonth + 1;
+
+  const monthExpenses = await db.expenses.where("spentAt").aboveOrEqual(start).toArray();
+  const spent = monthExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const left = monthly - spent;
+
+  const daily: { day: number; total: number }[] = [];
+  for (let d = 1; d <= dayOfMonth; d++) daily.push({ day: d, total: 0 });
+  for (const e of monthExpenses) {
+    const slot = daily[new Date(e.spentAt).getDate() - 1];
+    if (slot) slot.total += e.amount;
+  }
+
+  const catMap = new Map<string, number>();
+  for (const e of monthExpenses) catMap.set(e.category, (catMap.get(e.category) ?? 0) + e.amount);
+  const byCategory = Array.from(catMap.entries())
+    .map(([name, total]) => ({ name, total }))
+    .sort((a, b) => b.total - a.total);
+
+  const idealSpent = (monthly * dayOfMonth) / daysInMonth;
+  const overPace = spent > idealSpent;
+
+  // Current month + previous 5, grouped — history the graph grows into.
+  const sixStart = new Date(now.getFullYear(), now.getMonth() - 5, 1).getTime();
+  const recent = await db.expenses.where("spentAt").aboveOrEqual(sixStart).toArray();
+  const monthTotals: BudgetState["monthTotals"] = [];
+  for (let back = 5; back >= 0; back--) {
+    const mStart = new Date(now.getFullYear(), now.getMonth() - back, 1).getTime();
+    const mEnd = new Date(now.getFullYear(), now.getMonth() - back + 1, 1).getTime();
+    const total = recent
+      .filter((e) => e.spentAt >= mStart && e.spentAt < mEnd)
+      .reduce((sum, e) => sum + e.amount, 0);
+    monthTotals.push({
+      start: mStart,
+      label: new Date(mStart).toLocaleDateString(undefined, { month: "short" }),
+      total,
+      current: back === 0,
+    });
+  }
+
   return {
-    weeklyBudget: settings.weeklyBudget,
+    monthlyBudget: monthly,
+    weeklyBudget: Math.round((monthly * 12) / 52 * 100) / 100,
     spent,
     left,
     currency: settings.currency || "$",
-    expenses: weekExpenses,
+    expenses: monthExpenses,
+    daysInMonth,
+    dayOfMonth,
+    daysLeft,
+    safeToSpend: Math.max(0, left) / Math.max(1, daysLeft),
+    idealSpent,
+    overPace,
+    byCategory,
+    daily,
+    monthTotals,
   };
 }
 
@@ -338,6 +438,11 @@ export async function importAllData(json: string): Promise<void> {
     settingsPatch = {};
     if (typeof s.name === "string") settingsPatch.name = s.name.slice(0, 60);
     if (Number.isFinite(s.weeklyBudget as number) && (s.weeklyBudget as number) > 0) settingsPatch.weeklyBudget = s.weeklyBudget as number;
+    if (Number.isFinite(s.monthlyBudget as number) && (s.monthlyBudget as number) > 0) settingsPatch.monthlyBudget = s.monthlyBudget as number;
+    if (Number.isFinite(s.incomeAmount as number) && (s.incomeAmount as number) > 0) settingsPatch.incomeAmount = s.incomeAmount as number;
+    if (s.incomeCadence === "weekly" || s.incomeCadence === "biweekly" || s.incomeCadence === "monthly") {
+      settingsPatch.incomeCadence = s.incomeCadence;
+    }
     if (typeof s.currency === "string" && s.currency.length > 0) settingsPatch.currency = s.currency.slice(0, 4);
     if (s.weekStart === 0 || s.weekStart === 1) settingsPatch.weekStart = s.weekStart;
     if (typeof s.groqApiKey === "string" && s.groqApiKey) settingsPatch.groqApiKey = s.groqApiKey;

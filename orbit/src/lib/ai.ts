@@ -32,7 +32,14 @@ function systemPrompt(ctx: {
   energy: number | null;
   budgetLeft: number;
   currency: string;
-  weeklyBudget: number;
+  monthlyBudget: number;
+  safeToSpend: number;
+  overPace: boolean;
+  daysLeft: number;
+  dayOfMonth: number;
+  daysInMonth: number;
+  topCategories: string;
+  incomeLine: string;
   deadlines: { title: string; course?: string; dueAt: number; estimatedHours?: number }[];
   day: string;
   nowClass?: string;
@@ -58,7 +65,10 @@ function systemPrompt(ctx: {
 
 User: ${ctx.name || "student"}. It is ${ctx.day}.
 Energy today: ${ctx.energy ?? "not logged"}/5.
-Budget: ${ctx.budgetLeft.toFixed(2)}${ctx.currency} left of ${ctx.weeklyBudget}${ctx.currency} this week.
+Budget: ${ctx.budgetLeft.toFixed(2)}${ctx.currency} left of ${ctx.monthlyBudget.toFixed(2)}${ctx.currency} this month (day ${ctx.dayOfMonth} of ${ctx.daysInMonth}, ${ctx.daysLeft} days counting today).
+Safe to spend: about ${ctx.safeToSpend.toFixed(2)}${ctx.currency}/day for the rest of the month.
+Pace: ${ctx.overPace ? "AHEAD of the ideal pace (spending faster than the flat line)" : "on or under the ideal pace"}.${ctx.incomeLine}
+Top spending categories: ${ctx.topCategories || "(none yet)"}.
 Current GPA: ${ctx.gpa ? ctx.gpa.toFixed(2) : "n/a"}.
 Now: ${ctx.nowClass ?? "no class"}.
 Next class: ${ctx.nextClass ?? "none scheduled"}.
@@ -87,6 +97,7 @@ Rules:
 - Use line breaks for lists or day-by-day tables; one line per item, aligned and compact (e.g. "Mon  09:00–11:00  PHYS101 (Lab 2)").
 - When asked to build, reshape or review a timetable or study schedule: work strictly from TIMETABLE above, show every weekday (flagging free days too), slot study/work blocks around classes and around due deadlines, and call out clashes, back-to-back days or zero-break stretches. If TIMETABLE is empty, tell them to add classes on the Timetable tab first and that you'll build the plan from it right after.
 - When they report a change (new class moved, deadline done), acknowledge it and update your view — but only their data changes it, not conversation.
+- Money questions: answer with the actual budget numbers above (left this month, safe-to-spend/day, pace, top categories). For "can I afford X", compare X against today's safe-to-spend and say it plainly. If they're ahead of pace, propose one specific cut drawn from their biggest category — concrete amounts, no lectures. Never invent spending figures.
 - No emoji unless the user uses them first.`;
 
   const json = `
@@ -137,7 +148,20 @@ async function askGroq(
     energy: energy?.energy ?? null,
     budgetLeft: budget.left,
     currency: budget.currency,
-    weeklyBudget: budget.weeklyBudget,
+    monthlyBudget: budget.monthlyBudget,
+    safeToSpend: budget.safeToSpend,
+    overPace: budget.overPace,
+    daysLeft: budget.daysLeft,
+    dayOfMonth: budget.dayOfMonth,
+    daysInMonth: budget.daysInMonth,
+    topCategories: budget.byCategory
+      .slice(0, 4)
+      .map((c) => `${c.name} ${c.total.toFixed(0)}`)
+      .join(", "),
+    incomeLine:
+      settings.incomeAmount && settings.incomeCadence
+        ? `\nIncome: ${settings.incomeAmount}${budget.currency} ${settings.incomeCadence}.`
+        : "",
     deadlines,
     day,
     nowClass: current ? current.name : undefined,
