@@ -2,5 +2,5 @@
   "version": "1.6",
   "versionCode": 8,
   "notes": "Chat send never drops a message: queueing, instant replies on tap, rate-limit retry",
-  "url": ""
+  "url": "https://github.com/kodjocybercreator/orbit/releases/download/v1.6/Orbit-v1.6.apk"
 }
