@@ -1,6 +1,6 @@
 {
-  "version": "1.7",
-  "versionCode": 9,
-  "notes": "Task reminder types (quiet/sound/phone alarm), monthly budget with pace graphs, and AI money advice",
-  "url": "https://github.com/kodjocybercreator/orbit/releases/download/v1.7/app-release.apk"
+  "version": "1.8",
+  "versionCode": 10,
+  "notes": "Bottom nav tabs respond instantly even on slow or flaky networks",
+  "url": ""
 }

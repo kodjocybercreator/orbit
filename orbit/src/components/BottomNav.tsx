@@ -14,6 +14,16 @@ const items = [
 
 export default function BottomNav() {
   const path = usePathname();
+
+  // When the chat keyboard is open, tapping a tab first blurs the input;
+  // the keyboard resize can move the nav between touchstart and touchend and
+  // silently cancel the tap. Blurring at pointer-down starts that resize as
+  // early as possible so the nav is stable before the tap completes.
+  const blurFocusedInput = () => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body) active.blur();
+  };
+
   return (
     <nav
       className="fixed bottom-0 inset-x-0 z-50 border-t"
@@ -33,6 +43,8 @@ export default function BottomNav() {
             <Link
               key={item.href}
               href={item.href}
+              prefetch={false}
+              onPointerDown={blurFocusedInput}
               className="flex-1 flex flex-col items-center gap-0.5 pt-2.5 pb-1.5 text-[10px] font-semibold tracking-wide transition-colors press"
               style={{ color: active ? "var(--accent)" : "var(--muted)" }}
               aria-current={active ? "page" : undefined}
