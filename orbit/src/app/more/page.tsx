@@ -56,7 +56,7 @@ export default function MorePage() {
         {tools.map((t) => {
           const Icon = t.icon;
           return (
-            <Link key={t.href} href={t.href} className="card flex items-center gap-3.5 press block">
+            <Link prefetch={false} key={t.href} href={t.href} className="card flex items-center gap-3.5 press block">
               <span
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl"
                 style={{ background: "var(--accent-soft)", color: "var(--accent)" }}

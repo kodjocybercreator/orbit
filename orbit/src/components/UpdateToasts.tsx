@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { RefreshCw, Download, X } from "lucide-react";
+import { Download, X } from "lucide-react";
 import {
   checkForUpdate,
   shouldAutoCheck,
@@ -13,7 +13,6 @@ import {
 import { notifyUpdateAvailable } from "@/lib/notify";
 
 type Notice =
-  | { kind: "sw"; title: string; body: string }
   | { kind: "feed"; title: string; body: string; url?: string };
 
 export default function UpdateToasts() {
@@ -23,16 +22,25 @@ export default function UpdateToasts() {
     if (process.env.NODE_ENV !== "production") return;
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
 
-    // Only offer a reload when a NEW service worker replaces an existing one
-    // (first-ever install does not reload the page).
+    // Only react when a NEW service worker replaces an existing one
+    // (first-ever install does not reload the page). A mid-session takeover
+    // leaves the running JS paired with new caches/RSC — tab taps then act
+    // dead. Reload once so the app always matches the worker.
     const wasControlled = Boolean(navigator.serviceWorker.controller);
+    try {
+      sessionStorage.removeItem("orbit-sw-reloaded");
+    } catch {
+      /* private mode */
+    }
     const onControllerChange = () => {
       if (!wasControlled) return;
-      setNotice({
-        kind: "sw",
-        title: "Update ready",
-        body: "A new version of Orbit was installed. Reload to switch to it.",
-      });
+      try {
+        if (sessionStorage.getItem("orbit-sw-reloaded")) return;
+        sessionStorage.setItem("orbit-sw-reloaded", "1");
+      } catch {
+        /* private mode — reload anyway */
+      }
+      window.location.reload();
     };
     navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
 
@@ -64,8 +72,22 @@ export default function UpdateToasts() {
 
     void runCheck();
 
+    /** App resume: look for a new SW (throttled), then surface a known update. */
     const onVisible = () => {
-      if (!document.hidden) void runCheck();
+      if (document.hidden) return;
+      const last = Number(localStorage.getItem("orbit-sw-up-checked") || 0);
+      if (Date.now() - last > 5 * 60_000) {
+        try {
+          localStorage.setItem("orbit-sw-up-checked", String(Date.now()));
+        } catch {
+          /* private mode */
+        }
+        navigator.serviceWorker
+          .getRegistration()
+          .then((reg) => reg?.update())
+          .catch(() => {});
+      }
+      void runCheck();
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
@@ -81,17 +103,7 @@ export default function UpdateToasts() {
   if (!notice) return null;
 
   const action =
-    notice.kind === "sw" ? (
-      <button
-        type="button"
-        onClick={() => window.location.reload()}
-        className="press flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold"
-        style={{ background: "var(--accent)", color: "var(--accent-ink)" }}
-      >
-        <RefreshCw size={13} />
-        Reload
-      </button>
-    ) : notice.url ? (
+    notice.url ? (
       <a
         href={notice.url}
         target="_blank"

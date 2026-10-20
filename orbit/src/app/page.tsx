@@ -96,7 +96,7 @@ export default function Home() {
             {name || "Orbit"}
           </h1>
         </div>
-        <Link
+        <Link prefetch={false}
           href="/chat"
           className="press flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-full border"
           style={{
@@ -146,7 +146,7 @@ export default function Home() {
         <div className="mb-2 flex items-baseline justify-between">
           <h2 className="label-cap">Today&apos;s 3 moves</h2>
           {plan.length > 0 && (
-            <Link
+            <Link prefetch={false}
               href="/chat"
               className="press flex items-center text-xs font-semibold"
               style={{ color: "var(--accent)" }}
@@ -170,7 +170,7 @@ export default function Home() {
             >
               {planning ? "Planning…" : "Plan my day"}
             </button>
-            <Link
+            <Link prefetch={false}
               href="/chat"
               className="press mt-2 block py-2 text-center text-xs font-medium"
               style={{ color: "var(--muted)" }}
@@ -218,7 +218,7 @@ export default function Home() {
       </section>
 
       <section className="grid grid-cols-2 gap-3">
-        <Link href="/chat" className="card press flex flex-col gap-1">
+        <Link prefetch={false} href="/chat" className="card press flex flex-col gap-1">
           <div className="flex items-center justify-between">
             <span className="label-cap">Energy</span>
             <Zap size={14} style={{ color: "var(--accent)" }} />
@@ -237,7 +237,7 @@ export default function Home() {
           </p>
         </Link>
 
-        <Link href="/budget" className="card press flex flex-col gap-1">
+        <Link prefetch={false} href="/budget" className="card press flex flex-col gap-1">
           <div className="flex items-center justify-between">
             <span className="label-cap">Budget left</span>
             <Wallet
@@ -261,7 +261,7 @@ export default function Home() {
       <section>
         <div className="mb-2 flex items-baseline justify-between">
           <h2 className="label-cap">Coming up</h2>
-          <Link
+          <Link prefetch={false}
             href="/deadlines"
             className="press flex items-center text-xs font-semibold"
             style={{ color: "var(--accent)" }}
@@ -274,7 +274,7 @@ export default function Home() {
             <p className="text-sm" style={{ color: "var(--muted)" }}>
               Nothing due in the next 7 days.
             </p>
-            <Link
+            <Link prefetch={false}
               href="/deadlines"
               className="press text-xs font-semibold"
               style={{ color: "var(--accent)" }}
@@ -305,7 +305,7 @@ export default function Home() {
         )}
       </section>
 
-      <Link href="/focus" className="card-flat press flex items-center gap-3">
+      <Link prefetch={false} href="/focus" className="card-flat press flex items-center gap-3">
         <span
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
           style={{ background: "var(--accent-soft)" }}
