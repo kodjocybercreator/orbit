@@ -2,5 +2,5 @@
   "version": "1.9",
   "versionCode": 11,
   "notes": "Self-healing updates: the app reloads itself after a background update so tab taps never go dead; faster launches",
-  "url": ""
+  "url": "https://github.com/kodjocybercreator/orbit/releases/download/v1.9/app-release.apk"
 }
